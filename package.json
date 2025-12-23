@@ -1,0 +1,14 @@
+{
+  "name": "truth-gazette",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node test/run_tests.js",
+    "start": "vercel dev --listen 3000"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7",
+    "@upstash/redis": "^1.11.0",
+    "@upstash/ratelimit": "^1.5.0"
+  }
+} 

@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Truth Gazette - Fake News Detector</title>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Libre+Baskerville:wght@400;700&family=Special+Elite&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Libre Baskerville', serif;
+            background: #f4f1e8;
+            color: #1a1a1a;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .newspaper-wrapper {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #fff;
+            box-shadow: 0 0 30px rgba(0,0,0,0.2);
+            border: 1px solid #d4c5a9;
+        }
+
+        .newspaper-header {
+            background: #1a1a1a;
+            color: #f4f1e8;
+            padding: 30px 40px;
+            border-bottom: 4px double #d4c5a9;
+            text-align: center;
+        }
+
+        .masthead {
+            font-family: 'Playfair Display', serif;
+            font-size: 3.5em;
+            font-weight: 900;
+            letter-spacing: 3px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            border-top: 2px solid #d4c5a9;
+            border-bottom: 2px solid #d4c5a9;
+            padding: 15px 0;
+        }
+
+        .subheader {
+            font-family: 'Special Elite', cursive;
+            font-size: 0.9em;
+            letter-spacing: 2px;
+            margin-top: 10px;
+            color: #d4c5a9;
+        }
+
+        .date-line {
+            font-family: 'Special Elite', cursive;
+            font-size: 0.8em;
+            margin-top: 15px;
+            color: #999;
+            letter-spacing: 1px;
+        }
+
+        .newspaper-content {
+            padding: 40px;
+            background: #fff;
+        }
+
+        .section-title {
+            font-family: 'Playfair Display', serif;
+            font-size: 2em;
+            font-weight: 700;
+            border-bottom: 3px solid #1a1a1a;
+            padding-bottom: 10px;
+            margin-bottom: 25px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .input-methods {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .input-card {
+            border: 2px solid #1a1a1a;
+            padding: 20px;
+            background: #fafaf8;
+            transition: all 0.3s ease;
+        }
+
+        .input-card:hover {
+            background: #f0ede3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .input-card h3 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #999;
+            padding-bottom: 8px;
+        }
+
+        .input-card label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+
+        textarea, input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #1a1a1a;
+            background: #fff;
+            font-family: 'Libre Baskerville', serif;
+            font-size: 0.95em;
+            resize: vertical;
+            min-height: 120px;
+        }
+
+        input[type="text"] {
+            min-height: auto;
+        }
+
+        textarea:focus, input[type="text"]:focus {
+            outline: none;
+            background: #fffef8;
+            border-color: #c41e3a;
+        }
+
+        .file-upload-wrapper {
+            position: relative;
+            margin-top: 10px;
+        }
+
+        .file-upload-label {
+            display: block;
+            padding: 12px 20px;
+            background: #1a1a1a;
+            color: #f4f1e8;
+            text-align: center;
+            cursor: pointer;
+            border: 2px solid #1a1a1a;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .file-upload-label:hover {
+            background: #2a2a2a;
+            transform: translateX(3px);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .image-preview {
+            margin-top: 15px;
+            border: 2px solid #1a1a1a;
+            max-width: 100%;
+            display: none;
+        }
+
+        .image-preview img {
+            width: 100%;
+            display: block;
+        }
+
+        .analyze-section {
+            text-align: center;
+            margin: 40px 0;
+            padding: 30px;
+            background: #1a1a1a;
+            border: 3px double #d4c5a9;
+        }
+
+        .analyze-btn {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.5em;
+            font-weight: 700;
+            padding: 20px 50px;
+            background: #c41e3a;
+            color: #fff;
+            border: 3px solid #8b1528;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 0 #8b1528;
+        }
+
+        .analyze-btn:hover:not(:disabled) {
+            background: #a01828;
+            transform: translateY(2px);
+            box-shadow: 0 2px 0 #8b1528;
+        }
+
+        .analyze-btn:disabled {
+            background: #666;
+            border-color: #444;
+            box-shadow: 0 4px 0 #444;
+            cursor: not-allowed;
+        }
+
+        .clear-btn {
+            margin-left: 15px;
+            font-family: 'Libre Baskerville', serif;
+            font-size: 1em;
+            padding: 15px 30px;
+            background: #fff;
+            color: #1a1a1a;
+            border: 2px solid #1a1a1a;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .clear-btn:hover {
+            background: #1a1a1a;
+            color: #fff;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            background: #fafaf8;
+            border: 3px double #1a1a1a;
+            margin: 30px 0;
+        }
+
+        .loading-text {
+            font-family: 'Special Elite', cursive;
+            font-size: 1.3em;
+            margin-bottom: 20px;
+            animation: blink 1.5s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .typewriter {
+            font-family: 'Special Elite', cursive;
+            font-size: 1.1em;
+            margin-top: 15px;
+        }
+
+        .result-article {
+            margin-top: 40px;
+            border: 4px double #1a1a1a;
+            padding: 0;
+            background: #fff;
+        }
+
+        .result-headline {
+            background: #1a1a1a;
+            color: #fff;
+            padding: 25px 30px;
+            text-align: center;
+            border-bottom: 3px solid #d4c5a9;
+        }
+
+        .result-headline h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 2.5em;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+        }
+
+        .verdict-badge {
+            display: inline-block;
+            padding: 8px 25px;
+            font-family: 'Special Elite', cursive;
+            font-size: 1em;
+            font-weight: 700;
+            letter-spacing: 2px;
+            margin-top: 10px;
+            border: 2px solid #fff;
+        }
+
+        .verdict-fake {
+            background: #c41e3a;
+            color: #fff;
+        }
+
+        .verdict-real {
+            background: #2d5016;
+            color: #fff;
+        }
+
+        .verdict-uncertain {
+            background: #f4a500;
+            color: #1a1a1a;
+        }
+
+        .result-body {
+            padding: 35px 40px;
+            columns: 2;
+            column-gap: 40px;
+            column-rule: 1px solid #ddd;
+        }
+
+        .confidence-meter {
+            break-inside: avoid;
+            margin-bottom: 25px;
+            padding: 20px;
+            background: #fafaf8;
+            border: 2px solid #1a1a1a;
+            text-align: center;
+        }
+
+        .confidence-meter h3 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .meter-value {
+            font-family: 'Playfair Display', serif;
+            font-size: 3em;
+            font-weight: 900;
+            color: #c41e3a;
+        }
+
+        .analysis-section {
+            break-inside: avoid;
+            margin-bottom: 25px;
+        }
+
+        .analysis-section h3 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.4em;
+            border-bottom: 2px solid #1a1a1a;
+            padding-bottom: 8px;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .analysis-section p {
+            text-align: justify;
+            margin-bottom: 15px;
+            font-size: 1em;
+        }
+
+        .key-factors {
+            break-inside: avoid;
+            background: #fafaf8;
+            padding: 20px;
+            border-left: 4px solid #1a1a1a;
+            margin: 20px 0;
+        }
+
+        .key-factors h4 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.2em;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+        }
+
+        .key-factors ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .key-factors li {
+            padding: 8px 0;
+            border-bottom: 1px dotted #ccc;
+        }
+
+        .key-factors li:before {
+            content: "▶ ";
+            color: #c41e3a;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        .sources-section {
+            break-inside: avoid;
+            margin-top: 25px;
+            padding: 20px;
+            background: #fffef8;
+            border: 2px dashed #999;
+        }
+
+        .sources-section h4 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.2em;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+        }
+
+        .source-link {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            margin: 8px 0;
+            color: #1a1a1a;
+            text-decoration: none;
+            border: 2px solid #ddd;
+            background: #fff;
+            transition: all 0.3s ease;
+        }
+
+        .source-link:hover {
+            color: #c41e3a;
+            border-color: #c41e3a;
+            background: #fffef8;
+            transform: translateX(5px);
+        }
+
+        .source-link i {
+            color: #c41e3a;
+            font-size: 1.2em;
+            margin-left: 10px;
+        }
+
+        .footer {
+            background: #1a1a1a;
+            color: #d4c5a9;
+            padding: 30px;
+            text-align: center;
+            border-top: 3px double #d4c5a9;
+            font-family: 'Special Elite', cursive;
+        }
+
+        .footer p {
+            margin: 8px 0;
+            font-size: 0.9em;
+        }
+
+        /* Flashlight easter egg (lights-out mode) */
+        #flashlightOverlay {
+            pointer-events: none;
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(circle at var(--x, 50%) var(--y, 50%), transparent 120px, rgba(0,0,0,0.95) 220px);
+            display: none;
+            transition: background 0.05s linear;
+            z-index: 9999;
+        }
+
+        body.lights-out #flashlightOverlay { display: block; }
+        body.lights-out { cursor: none; }
+
+        .flashlight-hint {
+            position: fixed;
+            right: 12px;
+            bottom: 12px;
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            display: none;
+            z-index: 10000;
+        }
+
+        body.lights-out .flashlight-hint { display: block; }
+
+        @media (max-width: 768px) {
+            .masthead {
+                font-size: 2em;
+            }
+            
+            .result-body {
+                columns: 1;
+            }
+            
+            .newspaper-content {
+                padding: 20px;
+            }
+            
+            .analyze-btn {
+                font-size: 1.2em;
+                padding: 15px 30px;
+            }
+            
+            .clear-btn {
+                margin-left: 0;
+                margin-top: 15px;
+                display: block;
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="newspaper-wrapper">
+        <div class="newspaper-header">
+            <div class="masthead"> THE TRUTH GAZETTE</div>
+            <div class="subheader">Est. 2025 | AI-Powered News Verification Bureau</div>
+            <div class="date-line">DECEMBER 2025 EDITION | CAPSTONE PROJECT BY ISHANT</div>
+        </div>
+
+        <div class="newspaper-content">
+            <div class="section-title">SUBMIT FOR VERIFICATION</div>
+            
+            <div class="input-methods">
+                <div class="input-card">
+                    <h3><i class="fas fa-edit"></i> Text Analysis</h3>
+                    <label>Paste Article or Headline:</label>
+                    <textarea id="newsInput" placeholder="Enter the news article, headline, or claim you want to verify..."></textarea>
+                </div>
+
+                <div class="input-card">
+                    <h3><i class="fas fa-link"></i> URL Investigation</h3>
+                    <label>Enter News Article URL:</label>
+                    <input type="text" id="urlInput" placeholder="https://example.com/news-article">
+                    <small style="display: block; margin-top: 8px; color: #666;">We'll fetch and analyze the article content with relevant sources</small>
+                </div>
+
+                <div class="input-card">
+                    <h3><i class="fas fa-camera"></i> Image Verification</h3>
+                    <label>Upload or Capture Image:</label>
+                    <div class="file-upload-wrapper">
+                        <label class="file-upload-label" for="imageInput">
+                            <i class="fas fa-upload"></i> Choose Image / Take Photo
+                        </label>
+                        <input type="file" id="imageInput" accept="image/*" capture="environment">
+                    </div>
+                    <div class="image-preview" id="imagePreview">
+                        <img id="previewImg" src="" alt="Preview">
+                    </div>
+                    <small style="display: block; margin-top: 8px; color: #666;">AI will analyze text in images and verify claims</small>
+                </div>
+            </div>
+
+            <div class="analyze-section">
+                <button class="analyze-btn" id="analyzeBtn" onclick="investigateNews()">
+                    <i class="fas fa-search"></i> INVESTIGATE NOW <i class="fas fa-search"></i>
+                </button>
+                <button class="clear-btn" onclick="clearAll()"><i class="fas fa-trash"></i> Clear All</button>
+            </div>
+
+            <div id="resultArea"></div>
+        </div>
+
+        <div class="footer">
+            <p><strong><i class="fas fa-balance-scale"></i> THE TRUTH GAZETTE - FAKE NEWS DETECTION BUREAU <i class="fas fa-balance-scale"></i></strong></p>
+            <p>A Capstone Project by Ishant | December 2025</p>
+            <p style="margin-top: 15px; font-size: 0.8em;">Disclaimer: This AI tool provides analysis to assist in fact-checking. Always verify important information through multiple credible sources.</p>
+        </div>
+    </div>
+
+    <script>
+        // NOTE: API keys must NOT be exposed in the frontend. All requests must be proxied through a server endpoint (e.g. `/api/investigate`) which reads API keys from environment variables.
+        const MODEL = "gemini-2.5-flash"; // Model identifier (server-side will use this)
+        // Serverless endpoint: POST /api/investigate — returns { result, groundingMetadata }
+
+
+        let uploadedImage = null;
+        // Ensure anonymous session id exists (stored in localStorage)
+        function ensureSession() {
+            let sid = localStorage.getItem('tg_session');
+            if (!sid) {
+                sid = 's_' + Math.random().toString(36).slice(2,12) + Date.now().toString(36).slice(-4);
+                localStorage.setItem('tg_session', sid);
+            }
+            return sid;
+        }
+        const TG_SESSION = ensureSession();
+
+        // Image preview functionality
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    uploadedImage = e.target.result;
+                    document.getElementById('previewImg').src = uploadedImage;
+                    document.getElementById('imagePreview').style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        function clearAll() {
+            document.getElementById('newsInput').value = '';
+            document.getElementById('urlInput').value = '';
+            document.getElementById('imageInput').value = '';
+            document.getElementById('imagePreview').style.display = 'none';
+            document.getElementById('resultArea').innerHTML = '';
+            uploadedImage = null;
+        }
+
+        async function investigateNews() {
+            const textInput = document.getElementById('newsInput').value.trim();
+            const urlInput = document.getElementById('urlInput').value.trim();
+            const resultArea = document.getElementById('resultArea');
+            const analyzeBtn = document.getElementById('analyzeBtn');
+
+            if (!textInput && !urlInput && !uploadedImage) {
+                alert('Please provide at least one input: text, URL, or image!');
+                return;
+            }
+
+            analyzeBtn.disabled = true;
+            resultArea.innerHTML = `
+                <div class="loading">
+                    <div class="loading-text"><i class="fas fa-hourglass-half"></i> INVESTIGATION IN PROGRESS <i class="fas fa-hourglass-half"></i></div>
+                    <div class="typewriter">Our AI journalists are fact-checking...</div>
+                    <div class="typewriter" style="margin-top: 10px;">Cross-referencing with trusted sources...</div>
+                    <div class="typewriter" style="margin-top: 10px;">Analyzing credibility indicators...</div>
+                </div>
+            `;
+
+            // Auto-scroll to results
+            setTimeout(() => {
+                resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
+
+            try {
+                // Build payload and call server endpoint (server will handle API keys, grounding, rate-limiting, and caching)
+                const payload = {
+                    text: textInput,
+                    url: urlInput,
+                    image: uploadedImage
+                };
+
+                // Basic client-side validation and sanitization to save tokens:
+                if (payload.text && payload.text.length > 3000) {
+                    alert('Text input too long. Please shorten to 3000 characters or less.');
+                    analyzeBtn.disabled = false;
+                    return;
+                }
+                payload.text = payload.text ? payload.text.replace(/([!?.]){2,}/g, '$1').replace(/(.)\1{20,}/g, '$1') : '';
+
+                const response = await fetch('/api/investigate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Session-Id': TG_SESSION },
+                    body: JSON.stringify({ ...payload, sessionId: TG_SESSION })
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Server request failed');
+                }
+
+                // Server returns { result, groundingMetadata }
+                const result = data.result;
+                const groundingMetadata = data.groundingMetadata || data.grounding_metadata || null;
+                
+                displayResult(result, groundingMetadata, data.quotaRemaining);
+
+                // Auto-scroll to results after they load
+                setTimeout(() => {
+                    resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 300);
+
+            } catch (error) {
+                console.error('Error:', error);
+                resultArea.innerHTML = `
+                    <div class="result-article">
+                        <div class="result-headline" style="background: #c41e3a;">
+                            <h2><i class="fas fa-exclamation-triangle"></i> INVESTIGATION FAILED <i class="fas fa-exclamation-triangle"></i></h2>
+                            <div class="verdict-badge verdict-uncertain">ERROR</div>
+                        </div>
+                        <div class="result-body">
+                            <div class="analysis-section">
+                                <p>Our investigation bureau encountered technical difficulties. Please check your API key and try again.</p>
+                                <p style="font-size: 0.9em; margin-top: 15px; color: #666;">Error details: ${error.message}</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } finally {
+                analyzeBtn.disabled = false;
+            }
+        }
+
+        function displayResult(result, groundingMetadata, quotaRemaining) {
+            const resultArea = document.getElementById('resultArea');
+            let quotaBannerHTML = '';
+            if (typeof quotaRemaining !== 'undefined' && quotaRemaining !== null) {
+                quotaBannerHTML = `<div style="padding:10px;background:#fff3cd;border:1px solid #ffeeba;margin-bottom:12px;font-size:0.95em;">Free analysis quota remaining today: <strong>${quotaRemaining}</strong>. Some requests may be limited when quota is exhausted.</div>`;
+            }
+            
+            let verdict = result.verdict.toUpperCase();
+            let verdictClass = verdict === 'FAKE' ? 'verdict-fake' : verdict === 'REAL' ? 'verdict-real' : 'verdict-uncertain';
+            let icon = verdict === 'FAKE' ? 'fas fa-times-circle' : verdict === 'REAL' ? 'fas fa-check-circle' : 'fas fa-question-circle';
+            let bgColor = verdict === 'FAKE' ? '#c41e3a' : verdict === 'REAL' ? '#2d5016' : '#f4a500';
+            
+            const keyFactorsHTML = result.keyFactors 
+                ? result.keyFactors.map(factor => `<li><i class="fas fa-caret-right"></i>${factor}</li>`).join('')
+                : '';
+
+            let sourcesHTML = '';
+            if (groundingMetadata && groundingMetadata.groundingChunks) {
+                // Filter out community-driven / opinion platforms from public output (internal only):
+                const blockedDomains = ['reddit.com','quora.com','medium.com'];
+                const publicSources = [];
+                let internalCrossRefUsed = false;
+                let publicCounter = 0;
+                groundingMetadata.groundingChunks.forEach((chunk) => {
+                    try {
+                        const uri = chunk.web?.uri || '';
+                        const title = chunk.web?.title || chunk.web?.displayName || uri;
+                        const snippet = chunk.web?.snippet || chunk.web?.description || chunk.excerpt || '';
+                        const domain = (() => { try { return new URL(uri).hostname.replace('www.',''); } catch(e){ return ''; } })();
+                        if (domain && blockedDomains.some(b => domain.endsWith(b))) {
+                            internalCrossRefUsed = true; // do not show these to users
+                            return;
+                        }
+                        publicCounter += 1;
+                        publicSources.push(`<a href="${uri}" target="_blank" class="source-link">
+                            <div class="source-left">
+                                <span class="source-title"><strong>[${publicCounter}]</strong> ${title}</span>
+                                ${snippet ? `<span class="source-desc">${snippet}</span>` : ''}
+                                ${domain ? `<span class="source-desc" style="margin-top:6px; font-size:0.85em; color:#888;">${domain}</span>` : ''}
+                            </div>
+                            <i class="fas fa-external-link-alt"></i>
+                        </a>`);
+                    } catch (e) {
+                        // ignore chunk errors
+                    }
+                });
+                const sources = publicSources.join('');
+                sourcesHTML = `
+                    <div class="sources-section">
+                        <h4><i class="fas fa-book"></i> Primary & Secondary Sources Reviewed:</h4>
+                        ${sources}
+                        ${internalCrossRefUsed ? `<div style="margin-top:10px;font-size:0.9em;color:#666;font-style:italic;">Internally cross-referenced, not cited publicly.</div>` : ''}
+                    </div>
+                `;
+            } else if (result.sources && result.sources.length > 0) {
+                // Filter model-provided sources similarly: hide community platforms publicly
+                const blockedDomains = ['reddit.com','quora.com','medium.com'];
+                const publicSources = [];
+                let internalCrossRefUsed = false;
+                let counter = 0;
+
+                result.sources.forEach((source) => {
+                    try {
+                        if (typeof source === 'object' && source.url && source.url.startsWith('http')) {
+                            const domain = (() => { try { return new URL(source.url).hostname.replace('www.',''); } catch(e){ return ''; } })();
+                            if (domain && blockedDomains.some(b => domain.endsWith(b))) {
+                                internalCrossRefUsed = true;
+                                return;
+                            }
+                            counter += 1;
+                            const title = source.title || source.name || source.description || source.url;
+                            const desc = source.description || source.snippet || '';
+                            publicSources.push(`<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">
+                                <div class="source-left">
+                                    <span class="source-title"><strong>[${counter}]</strong> ${title}</span>
+                                    ${desc ? `<span class="source-desc">${desc}</span>` : ''}
+                                    ${domain ? `<span class="source-desc" style="margin-top:6px; font-size:0.85em; color:#888;">${domain}</span>` : ''}
+                                </div>
+                                <i class="fas fa-external-link-alt"></i>
+                            </a>`);
+                            return;
+                        }
+
+                        if (typeof source === 'string' && source.startsWith('http')) {
+                            const domain = (() => { try { return new URL(source).hostname.replace('www.',''); } catch(e){ return source; } })();
+                            if (domain && blockedDomains.some(b => domain.endsWith(b))) {
+                                internalCrossRefUsed = true;
+                                return;
+                            }
+                            counter += 1;
+                            publicSources.push(`<a href="${source}" target="_blank" rel="noopener noreferrer" class="source-link">
+                                <div class="source-left">
+                                    <span class="source-title"><strong>[${counter}]</strong> ${domain}</span>
+                                </div>
+                                <i class="fas fa-external-link-alt"></i>
+                            </a>`);
+                            return;
+                        }
+
+                        // fallback: text-only
+                        counter += 1;
+                        publicSources.push(`<div style="padding: 12px; margin: 10px 0; border: 2px solid #ddd; background: #fffef8;"><i class="fas fa-caret-right"></i> <strong>[${counter}]</strong> ${typeof source === 'object' ? (source.title || source) : source}</div>`);
+                    } catch (e) {
+                        // ignore and continue
+                    }
+                });
+
+                const sources = publicSources.join('');
+                sourcesHTML = `
+                    <div class="sources-section">
+                        <h4><i class="fas fa-book"></i> Primary & Secondary Sources Reviewed:</h4>
+                        ${sources}
+                        ${internalCrossRefUsed ? `<div style="margin-top:10px;font-size:0.9em;color:#666;font-style:italic;">Internally cross-referenced, not cited publicly.</div>` : ''}
+                    </div>
+                `;
+            }
+
+            const analysisText = result.analysis || '';
+            const analysisHTML = analysisText.split(/\n\s*\n/).map(p => `<p>${p.trim()}</p>`).join('');
+
+            resultArea.innerHTML = `
+                ${quotaBannerHTML}
+                <div class="result-article">
+                    <div class="result-headline" style="background: ${bgColor};">
+                        <h2><i class="${icon}"></i> ${result.headline || verdict + ' NEWS DETECTED'} <i class="${icon}"></i></h2>
+                        <div class="verdict-badge ${verdictClass}">${verdict}</div>
+                    </div>
+                    
+                    <div class="result-body">
+                        <div class="confidence-meter">
+                            <h3>Confidence Level</h3>
+                            <div class="meter-value">${result.confidence}%</div>
+                            <div style="margin-top: 10px; font-size: 0.9em; color: #666;">Based on AI analysis and fact-checking</div>
+                            <div style="margin-top: 6px; font-size: 0.9em; color: #666;">Confidence is derived from source credibility, consensus strength, and data consistency.</div>
+                        </div>
+
+                        <div class="analysis-section">
+                            <h3><i class="fas fa-clipboard-list"></i> Investigation Report</h3>
+                            ${analysisHTML}
+                        </div>
+
+                        ${keyFactorsHTML ? `
+                            <div class="key-factors">
+                                <h4><i class="fas fa-key"></i> Key Findings:</h4>
+                                <ul>${keyFactorsHTML}</ul>
+                            </div>
+                        ` : ''}
+
+                        ${sourcesHTML}
+
+                        <div style="margin-top: 25px; padding: 15px; background: #fafaf8; border: 1px solid #ddd; font-size: 0.9em; text-align: center;">
+                            <strong><i class="fas fa-balance-scale"></i> Editorial Note:</strong> This analysis was conducted by AI technology as part of Ishant's capstone project. 
+                            Always cross-reference important information with multiple credible sources.
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Allow Enter to submit from text input
+        document.getElementById('newsInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                investigateNews();
+            }
+        });
+
+        // Easter egg: lights-out "flashlight" mode (Shift+L to toggle)
+        (function() {
+            const overlay = document.createElement('div');
+            overlay.id = 'flashlightOverlay';
+            document.body.appendChild(overlay);
+            const hint = document.createElement('div');
+            hint.className = 'flashlight-hint';
+            hint.textContent = 'Lights-out mode: Press Shift+L to toggle';
+            document.body.appendChild(hint);
+
+            let enabled = false;
+            const toggle = () => {
+                enabled = !enabled;
+                document.body.classList.toggle('lights-out', enabled);
+            };
+
+            document.addEventListener('keydown', (e) => {
+                if (e.shiftKey && (e.key === 'L' || e.key === 'l')) {
+                    toggle();
+                }
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                overlay.style.setProperty('--x', `${e.clientX}px`);
+                overlay.style.setProperty('--y', `${e.clientY}px`);
+            });
+
+            document.addEventListener('touchmove', (e) => {
+                const t = e.touches[0];
+                overlay.style.setProperty('--x', `${t.clientX}px`);
+                overlay.style.setProperty('--y', `${t.clientY}px`);
+            });
+
+            overlay.addEventListener('click', (e) => e.preventDefault());
+        })();
+    </script>
+</body>
+</html>
