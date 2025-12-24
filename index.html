@@ -685,10 +685,7 @@
 
         function displayResult(result, groundingMetadata, quotaRemaining) {
             const resultArea = document.getElementById('resultArea');
-            let quotaBannerHTML = '';
-            if (typeof quotaRemaining !== 'undefined' && quotaRemaining !== null) {
-                quotaBannerHTML = `<div style="padding:10px;background:#fff3cd;border:1px solid #ffeeba;margin-bottom:12px;font-size:0.95em;">Free analysis quota remaining today: <strong>${quotaRemaining}</strong>. Some requests may be limited when quota is exhausted.</div>`;
-            }
+
             
             let verdict = result.verdict.toUpperCase();
             let verdictClass = verdict === 'FAKE' ? 'verdict-fake' : verdict === 'REAL' ? 'verdict-real' : 'verdict-uncertain';
@@ -804,7 +801,6 @@
             const analysisHTML = analysisText.split(/\n\s*\n/).map(p => `<p>${p.trim()}</p>`).join('');
 
             resultArea.innerHTML = `
-                ${quotaBannerHTML}
                 <div class="result-article">
                     <div class="result-headline" style="background: ${bgColor};">
                         <h2><i class="${icon}"></i> ${result.headline || verdict + ' NEWS DETECTED'} <i class="${icon}"></i></h2>

@@ -13,12 +13,11 @@ The Truth Gazette helps students, teachers, and community members quickly assess
 ---
 
 ## ✨ Features
-- Text, URL, and image inputs (image OCR for text-in-image claims)
-- Structured, human-readable JSON output from the model (verdict, confidence, sources)
-- Server-side proxy for API calls (no keys in the frontend)
-- Upstash-based rate limiting, caching, and daily quota support (server-side)
-- Source filtering to show only authoritative public sources
-- A playful "lights-out" flashlight easter egg (Shift+L)
+- Inputs: **Text**, **URL** (grounding/search), and **Image** (OCR → analyze)
+- Server-side prompt handling and provider calls
+- Optional rate-limiting & daily quotas using Upstash (`@upstash/ratelimit`, `@upstash/redis`); in-memory fallback for local testing
+- Optional caching to reduce provider usage
+- Simple static frontend (`index.html`) and a test harness (`test/run_tests.js`) for basic checks
 
 ---
 
@@ -56,5 +55,3 @@ Environment variables used:
 ## 📑 License & contributing
 - Licensed under the MIT License (see `LICENSE`).
 - If you'd like to contribute or adapt, follow `CONTRIBUTING.md`.
-
----

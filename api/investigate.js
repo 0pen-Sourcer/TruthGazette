@@ -154,7 +154,7 @@ module.exports = async (req, res) => {
       prompt += `\nIMAGE INCLUDED: Please analyze any text or claims visible in this image and verify them.\n`;
     }
 
-    prompt += `\nRespond in the following JSON format:\n{\n  "verdict": "FAKE" or "REAL" or "UNCERTAIN",\n  "confidence": [number between 65-95],\n  "headline": "[Create a dramatic newspaper-style headline about your verdict]",\n  "analysis": "[Detailed explanation as if writing a newspaper article, 2-3 short paragraphs]",\n  "keyFactors": ["factor1", "factor2"],\n  "sources": [ {"title":"source title","url":"https://..."} ]\n}\n\nIMPORTANT: Provide real verifiable URLs when available from reputable institutions (government, major news organizations, research orgs). If only community or opinion sources are found, include them only for INTERNAL cross-check and do not provide them in the 'sources' output.\n`;
+    prompt += `\nRespond in the following JSON format:\n{\n  "verdict": "FAKE" or "REAL" or "UNCERTAIN",\n  "confidence": [number between 65-95],\n  "confidence_explanation": "[Brief justification for the numeric confidence — cite evidence: number and quality of sources, grounding search hits, and strength of claims]",\n  "headline": "[Create a dramatic newspaper-style headline about your verdict]",\n  "analysis": "[Detailed explanation as if writing a newspaper article, 2-3 short paragraphs]",\n  "keyFactors": ["factor1", "factor2"],\n  "sources": [ {"title":"source title","url":"https://..."} ]\n}\n\nIMPORTANT: Provide real verifiable URLs when available from reputable institutions (government, major news organizations, research orgs). If only community or opinion sources are found, include them only for INTERNAL cross-check and do not provide them in the 'sources' output.\nNote: Avoid always using the same numeric confidence; tailor the number to the evidence and explain why in 'confidence_explanation'.\n`;
 
     const requestBody = {
       contents: [{ parts: [{ text: prompt }] }],
@@ -181,6 +181,52 @@ module.exports = async (req, res) => {
     }
 
     const groundingMetadata = data.candidates?.[0]?.groundingMetadata || null;
+
+    // Compute a deterministic, calibrated confidence score and explanation from model output
+    function computeConfidenceAndExplanation(res, grounding) {
+      const verdict = (res.verdict || 'UNCERTAIN').toUpperCase();
+      const sources = Array.isArray(res.sources) ? res.sources : [];
+      let score = 65;
+      if (verdict === 'REAL') score = 75;
+      else if (verdict === 'FAKE') score = 72;
+      else score = 65;
+
+      // reward number of sources
+      if (sources.length >= 1) score += 5;
+      if (sources.length >= 3) score += 8;
+
+      // boost for trusted domains
+      const trusted = ['gov','edu','nytimes.com','bbc.co.uk','theguardian.com','reuters.com','apnews.com'];
+      const hasTrusted = sources.some(s => {
+        try {
+          const u = (s.url || '').toLowerCase();
+          return trusted.some(t => u.includes(t));
+        } catch (e) { return false; }
+      });
+      if (hasTrusted) score += 8;
+
+      // grounding metadata hints
+      if (grounding && Array.isArray(grounding.found) && grounding.found.length > 0) score += 4;
+
+      // clamp into allowed range
+      score = Math.max(65, Math.min(95, score));
+
+      const parts = [];
+      parts.push(`Verdict: ${verdict}`);
+      parts.push(`${sources.length} source(s)`);
+      if (hasTrusted) parts.push('Includes trusted source(s)');
+      if (grounding && Array.isArray(grounding.found) && grounding.found.length > 0) parts.push('Grounding search found evidence');
+      const explanation = parts.join('; ');
+
+      return { score, explanation };
+    }
+
+    // Preserve model-provided confidence for transparency, but compute and override with deterministic value
+    const modelConfidence = result.confidence;
+    const computed = computeConfidenceAndExplanation(result, groundingMetadata);
+    result.modelConfidence = modelConfidence;
+    result.confidence = computed.score;
+    result.confidence_explanation = result.confidence_explanation || computed.explanation;
 
     const out = { result, groundingMetadata, quotaRemaining };
 
