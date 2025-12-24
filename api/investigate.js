@@ -174,9 +174,14 @@ module.exports = async (req, res) => {
     const combinedText = [sanitizedText, (ocrText || '').slice(0, 3000)].filter(Boolean).join('\n\n');
     if (combinedText) prompt += `\nTEXT TO ANALYZE:\n"${combinedText}"\n`;
     if (url) prompt += `\nURL PROVIDED: ${url}\nPlease use your knowledge and if possible cite credible sources to verify information from this URL and check its credibility.\n`;
+
     if (image) {
       // include a short instruction if image provided and note that OCR-text may be included
       prompt += `\nIMAGE INCLUDED: OCR text (if available) has been included above. Please analyze the image context and verify any claims.\n`;
+      // If no readable text was provided but an image exists, instruct the model to analyze the image visually
+      if (!combinedText) {
+        prompt += `\nNOTE: No readable text was detected in the provided image. Please analyze the image visually: describe visual elements, assess whether the image supports or contradicts factual claims, suggest concrete search queries that a researcher could use to ground or verify the image (e.g., reverse-image or news search terms), and avoid returning 'No content' as a final answer if the image contains verifiable visual evidence.\n`;
+      }
     }
 
     prompt += `\nRespond in the following JSON format:\n{\n  "verdict": "FAKE" or "REAL" or "UNCERTAIN",\n  "confidence": [number between 65-95],\n  "confidence_explanation": "[Brief justification for the numeric confidence — cite evidence: number and quality of sources, grounding search hits, and strength of claims]",\n  "headline": "[Create a dramatic newspaper-style headline about your verdict]",\n  "analysis": "[Detailed explanation as if writing a newspaper article, 2-3 short paragraphs]",\n  "keyFactors": ["factor1", "factor2"],\n  "sources": [ {"title":"source title","url":"https://..."} ]\n}\n\nIMPORTANT: Provide real verifiable URLs when available from reputable institutions (government, major news organizations, research orgs). If only community or opinion sources are found, include them only for INTERNAL cross-check and do not provide them in the 'sources' output.\nNote: Avoid always using the same numeric confidence; tailor the number to the evidence and explain why in 'confidence_explanation'.\n`;
@@ -258,6 +263,38 @@ module.exports = async (req, res) => {
     result.confidence_explanation = result.confidence_explanation || computed.explanation;
 
     const out = { result, groundingMetadata, quotaRemaining };
+
+    // If the model returned a 'no content' style response but we did provide OCR or image, re-run the model once with an explicit instruction to use the provided OCR/text
+    const lowerAi = (aiText || '').toLowerCase();
+    const noContentPhrases = ['no content', 'no material', 'no input provided', "there's no content", 'nothing to investigate'];
+    const flagged = noContentPhrases.some(p => lowerAi.includes(p));
+    if (flagged && combinedText) {
+      try {
+        const hintPrompt = `\nIMPORTANT: The user provided the following text extracted from the image or input, you MUST analyze it and not return a "no content" response.\n"""${combinedText}\n"""\nPlease re-evaluate and produce the JSON output as requested.`;
+        requestBody.contents[0].parts[0].text = prompt + hintPrompt;
+        const r2 = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
+        const d2 = await r2.json();
+        if (r2.ok) {
+          const aiText2 = d2.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          const jsonMatch2 = aiText2.match(/\{[\s\S]*\}/);
+          if (jsonMatch2) {
+            try {
+              const result2 = JSON.parse(jsonMatch2[0]);
+              result.rerun = true;
+              result.rerun_reason = 'model returned no-content; re-run with explicit hint';
+              result.rerun_result = result2;
+              // prefer new result
+              result = result2;
+              out.result = result;
+            } catch (e) {
+              // ignore parse error and keep first result
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Re-run after no-content failed', e);
+      }
+    }
 
     if (useUpstash && redisClient) {
       await redisClient.set(`investigate:${key}`, JSON.stringify(out), { ex: 60 * 60 }); // cache 1 hour
