@@ -1,4 +1,4 @@
-# THE TRUTH GAZETTE — Fake News Detector (Class 12 Capstone Project)
+# THE TRUTH GAZETTE — Fake News Detector
 
 **Tagline:** A student-built, AI-powered investigative mini-newspaper for spotting false claims. Built solo, polished, and ready to work.
 
