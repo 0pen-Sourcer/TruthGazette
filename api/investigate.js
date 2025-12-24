@@ -87,7 +87,7 @@ module.exports = async (req, res) => {
       }
     }
 
-    const { text = '', url = '', image = null } = req.body || {};
+    const { text = '', url = '', image = null, ocrText = '' } = req.body || {};
 
     // daily quota enforcement (per session or IP)
     const DAILY_LIMIT = parseInt(process.env.DAILY_QUOTA || '200', 10);
@@ -145,13 +145,38 @@ module.exports = async (req, res) => {
     const API_KEY = process.env.GEN_API_KEY; // MUST be set in Vercel/Env
     if (!API_KEY) return res.status(500).json({ error: 'Missing server API key' });
 
+    // Server-side Vision OCR (primary) — enabled by default. Set USE_SERVER_VISION=0 to disable.
+    let serverVisionText = '';
+    let serverVisionMetadata = null;
+    if (image && process.env.USE_SERVER_VISION !== '0') {
+      try {
+        const m = (image || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
+        if (m) {
+          const b64 = m[2];
+          const visionReq = { requests: [{ image: { content: b64 }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }, { type: 'TEXT_DETECTION' }] }] };
+          const vResp = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(visionReq) });
+          const vData = await vResp.json();
+          serverVisionMetadata = vData;
+          serverVisionText = vData.responses?.[0]?.fullTextAnnotation?.text || vData.responses?.[0]?.textAnnotations?.[0]?.description || '';
+          if (serverVisionText) {
+            // prefer server OCR over client-provided OCR
+            ocrText = serverVisionText;
+          }
+        }
+      } catch (e) {
+        console.warn('Server vision OCR failed', e);
+      }
+    }
+
     let prompt = `You are an expert investigative journalist and fact-checker working for "The Truth Gazette". This is a capstone project built by Ishant to demonstrate AI-powered fake news detection.\n\nAnalyze the provided content and determine if it contains FAKE NEWS, REAL NEWS, or if the verdict is UNCERTAIN.\n\nConsider these factors:\n- Sensational or clickbait language\n- Emotional manipulation tactics\n- Lack of credible sources or citations\n- Extreme or unverifiable claims\n- Professional journalistic tone vs. opinion-based writing\n- Presence of verifiable facts and evidence\n- URL credibility (if provided)\n- Image context and claims (if image provided)\n\n`;
 
-    if (sanitizedText) prompt += `\nTEXT TO ANALYZE:\n"${sanitizedText}"\n`;
+    // If the request included OCR text from the image, include it explicitly for grounding
+    const combinedText = [sanitizedText, (ocrText || '').slice(0, 3000)].filter(Boolean).join('\n\n');
+    if (combinedText) prompt += `\nTEXT TO ANALYZE:\n"${combinedText}"\n`;
     if (url) prompt += `\nURL PROVIDED: ${url}\nPlease use your knowledge and if possible cite credible sources to verify information from this URL and check its credibility.\n`;
     if (image) {
-      // include a short instruction if image provided
-      prompt += `\nIMAGE INCLUDED: Please analyze any text or claims visible in this image and verify them.\n`;
+      // include a short instruction if image provided and note that OCR-text may be included
+      prompt += `\nIMAGE INCLUDED: OCR text (if available) has been included above. Please analyze the image context and verify any claims.\n`;
     }
 
     prompt += `\nRespond in the following JSON format:\n{\n  "verdict": "FAKE" or "REAL" or "UNCERTAIN",\n  "confidence": [number between 65-95],\n  "confidence_explanation": "[Brief justification for the numeric confidence — cite evidence: number and quality of sources, grounding search hits, and strength of claims]",\n  "headline": "[Create a dramatic newspaper-style headline about your verdict]",\n  "analysis": "[Detailed explanation as if writing a newspaper article, 2-3 short paragraphs]",\n  "keyFactors": ["factor1", "factor2"],\n  "sources": [ {"title":"source title","url":"https://..."} ]\n}\n\nIMPORTANT: Provide real verifiable URLs when available from reputable institutions (government, major news organizations, research orgs). If only community or opinion sources are found, include them only for INTERNAL cross-check and do not provide them in the 'sources' output.\nNote: Avoid always using the same numeric confidence; tailor the number to the evidence and explain why in 'confidence_explanation'.\n`;
@@ -181,6 +206,10 @@ module.exports = async (req, res) => {
     }
 
     const groundingMetadata = data.candidates?.[0]?.groundingMetadata || null;
+
+    // Attach any server-side vision OCR metadata/output for transparency
+    if (serverVisionText) result.vision_ocr = serverVisionText;
+    if (serverVisionMetadata) result.vision_metadata = serverVisionMetadata;
 
     // Compute a deterministic, calibrated confidence score and explanation from model output
     function computeConfidenceAndExplanation(res, grounding) {

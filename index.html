@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Truth Gazette - Fake News Detector</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Libre+Baskerville:wght@400;700&family=Special+Elite&display=swap" rel="stylesheet">
+    <!-- Tesseract.js for client-side OCR -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2/dist/tesseract.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
@@ -209,6 +211,17 @@
             border-color: #444;
             box-shadow: 0 4px 0 #444;
             cursor: not-allowed;
+        }
+
+        /* Touch & mobile friendliness */
+        .analyze-btn, .clear-btn { touch-action: manipulation; }
+
+        @media (max-width: 600px) {
+            .analyze-section { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+            .analyze-btn, .clear-btn { width: 100%; box-sizing: border-box; }
+            .masthead { font-size: 2rem; }
+            .newspaper-wrapper { padding: 10px; }
+            textarea, input[type="text"] { font-size: 1rem; }
         }
 
         .clear-btn {
@@ -535,6 +548,7 @@
                     </div>
                     <div class="image-preview" id="imagePreview">
                         <img id="previewImg" src="" alt="Preview">
+                        <div id="ocrStatus" style="margin-top:8px;font-size:0.9em;color:#666;display:none">OCR: <span id="ocrText" style="font-weight:600"></span></div>
                     </div>
                     <small style="display: block; margin-top: 8px; color: #666;">AI will analyze text in images and verify claims</small>
                 </div>
@@ -564,6 +578,7 @@
 
 
         let uploadedImage = null;
+        let uploadedImageText = ''; // OCR result (if any)
         // Ensure anonymous session id exists (stored in localStorage)
         function ensureSession() {
             let sid = localStorage.getItem('tg_session');
@@ -578,6 +593,9 @@
         // Image preview functionality
         document.getElementById('imageInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
+            uploadedImageText = '';
+            document.getElementById('ocrStatus').style.display = 'none';
+            document.getElementById('ocrText').textContent = '';
             if (file) {
                 const reader = new FileReader();
                 reader.onload = function(e) {
@@ -586,6 +604,31 @@
                     document.getElementById('imagePreview').style.display = 'block';
                 };
                 reader.readAsDataURL(file);
+
+                // Run OCR in browser via Tesseract.js (best-effort)
+                try {
+                    document.getElementById('ocrStatus').style.display = 'block';
+                    document.getElementById('ocrText').textContent = 'Extracting...';
+                    // Use the file directly for better OCR
+                    Tesseract.recognize(file, 'eng', { logger: m => {
+                        // optional: show progress
+                        if (m && m.status === 'recognizing text' && m.progress) {
+                            document.getElementById('ocrText').textContent = 'Extracting... ' + Math.round(m.progress*100) + '%';
+                        }
+                    }}).then(function(result) {
+                        uploadedImageText = (result && result.data && result.data.text) ? result.data.text.trim() : '';
+                        if (uploadedImageText) {
+                            document.getElementById('ocrText').textContent = uploadedImageText.length > 200 ? uploadedImageText.slice(0,200) + '...' : uploadedImageText;
+                        } else {
+                            document.getElementById('ocrText').textContent = 'No text found';
+                        }
+                    }).catch(function(err){
+                        console.error('OCR error', err);
+                        document.getElementById('ocrText').textContent = 'OCR failed';
+                    });
+                } catch (err) {
+                    console.warn('Tesseract not available', err);
+                }
             }
         });
 
@@ -629,8 +672,17 @@
                 const payload = {
                     text: textInput,
                     url: urlInput,
-                    image: uploadedImage
+                    image: uploadedImage,
+                    ocrText: uploadedImageText
                 };
+
+                // If OCR extracted text and there's no text input, use it as the text payload
+                if (!payload.text && payload.ocrText) {
+                    payload.text = payload.ocrText;
+                } else if (payload.ocrText) {
+                    // append OCR text to provided text for extra context
+                    payload.text = (payload.text || '') + '\n\n[OCR TEXT]\n' + payload.ocrText;
+                }
 
                 // Basic client-side validation and sanitization to save tokens:
                 if (payload.text && payload.text.length > 3000) {
