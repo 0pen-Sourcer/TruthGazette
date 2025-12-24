@@ -60,14 +60,14 @@ Environment variables used:
 - Enable bot protection and firewall rules on Vercel.
 - Cache identical requests to save tokens; keep logs minimal and do not store user content.
 
-See `SECURITY_TODO.md` and `DEPLOYMENT.md` for step-by-step deployment and security instructions.
+> Deployment and detailed security notes were removed from the public repository. Keep the repository private and follow internal deployment guidance when preparing your demo.
 
 ---
 
 ## 📋 How to present the project (short)
 - Keep your GitHub repository private until you're ready to publish. If you plan to open-source it, remove any keys and ensure the server-side proxy is used for secrets.
-- Present the live site link and a short 2–3 minute demo video (use `DEMO_SCRIPT.md`).
-- Show `ARCHITECTURE.md` and `SECURITY_TODO.md` to explain server-side protection and rate limiting.
+- Present the live site link and a short demo video.
+- Explain the architecture and security measures during your demo (internal docs have been removed from the public repo).
 
 ---
 
