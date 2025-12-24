@@ -1,7 +1,6 @@
-# THE TRUTH GAZETTE — Fake News Detector (Class 12 Capstone Project)
+# THE TRUTH GAZETTE — Fake News Detector
 
-**Tagline:** A student-built, AI-powered investigative mini-newspaper for spotting false claims — built for Class 12 (Ishant). Built solo, polished, and ready to demo. 💀
-
+**Tagline:** A student-built, AI-powered investigative mini-newspaper for spotting false claims 
 ---
 
 ## 🔎 Overview
@@ -54,34 +53,8 @@ Environment variables used:
 
 ---
 
-## 🔒 Security & deployment (summary)
-- Keep API keys in environment variables in your hosting provider (e.g., Vercel Project → Environment Variables).
-- Use Upstash Redis + `@upstash/ratelimit` for per-IP/session rate limiting and daily quotas.
-- Enable bot protection and firewall rules on Vercel.
-- Cache identical requests to save tokens; keep logs minimal and do not store user content.
-
-> Deployment and detailed security notes were removed from the public repository. Keep the repository private and follow internal deployment guidance when preparing your demo.
-
----
-
-## 📋 How to present the project (short)
-- Keep your GitHub repository private until you're ready to publish. If you plan to open-source it, remove any keys and ensure the server-side proxy is used for secrets.
-- Present the live site link and a short demo video.
-- Explain the architecture and security measures during your demo (internal docs have been removed from the public repo).
-
----
-
 ## 📑 License & contributing
 - Licensed under the MIT License (see `LICENSE`).
 - If you'd like to contribute or adapt, follow `CONTRIBUTING.md`.
 
 ---
-
-If you want, I can also:
-- Add sample screenshots to the README,
-- Generate a single ZIP with the final submission materials (code + filled logbook + demo slides), or
-- Walk you step-by-step through deploying to Vercel (I can prepare the exact copy/paste env values and settings).
-
----
-
-Made by Ishant — Class 12 capstone. Keep it private until you decide to publish. If you plan to publish the repo, I strongly recommend keeping server keys hidden and relying on the serverless proxy.
