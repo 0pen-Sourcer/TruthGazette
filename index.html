@@ -605,27 +605,18 @@
                 };
                 reader.readAsDataURL(file);
 
-                // Run OCR in browser via Tesseract.js (best-effort)
+                // Run OCR in browser via Tesseract.js (silent background mode)
                 try {
-                    document.getElementById('ocrStatus').style.display = 'block';
-                    document.getElementById('ocrText').textContent = 'Extracting...';
+                    // Run OCR silently in the background; no UI progress is shown to the user
                     window._ocrInProgress = true;
-                    // Use the file directly for better OCR
                     Tesseract.recognize(file, 'eng', { logger: m => {
-                        if (m && m.status === 'recognizing text' && m.progress) {
-                            document.getElementById('ocrText').textContent = 'Extracting... ' + Math.round(m.progress*100) + '%';
-                        }
+                        // logger kept for telemetry only; do not update UI
                     }}).then(function(result) {
                         uploadedImageText = (result && result.data && result.data.text) ? result.data.text.trim() : '';
-                        if (uploadedImageText) {
-                            document.getElementById('ocrText').textContent = uploadedImageText.length > 200 ? uploadedImageText.slice(0,200) + '...' : uploadedImageText;
-                        } else {
-                            document.getElementById('ocrText').textContent = 'No text found';
-                        }
+                        // Do not display OCR text automatically; keep it for potential resubmits
                         window._ocrInProgress = false;
                     }).catch(function(err){
                         console.error('OCR error', err);
-                        document.getElementById('ocrText').textContent = 'OCR failed';
                         window._ocrInProgress = false;
                     });
                 } catch (err) {
@@ -655,12 +646,7 @@
                 return;
             }
 
-            // If OCR is still running, ask user to wait briefly to allow client OCR to finish (best-effort)
-            if (typeof window._ocrInProgress !== 'undefined' && window._ocrInProgress) {
-                alert('Image OCR is still running. Please wait a moment for the OCR to complete and try again.');
-                analyzeBtn.disabled = false;
-                return;
-            }
+
 
             analyzeBtn.disabled = true;
             resultArea.innerHTML = `
