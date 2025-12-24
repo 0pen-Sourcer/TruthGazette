@@ -5,3 +5,7 @@ node_modules/
 .vercel/
 secrets/
 *.log
+# Prevent accidental check-in of demo slides and logbooks
+*.pptx
+*.docx
+DEMO_SLIDES.pptx

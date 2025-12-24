@@ -6,7 +6,7 @@ let API;
 
 async function loadTestCases() {
   const md = fs.readFileSync(path.join(__dirname, '..', 'TEST_CASES.md'), 'utf8');
-  const jsonBlock = md.match(/```json\n([\s\S]*?)\n```/);
+  const jsonBlock = md.match(/```json\r?\n([\s\S]*?)\r?\n```/);
   if (!jsonBlock) throw new Error('JSON test block not found in TEST_CASES.md');
   const arr = JSON.parse(jsonBlock[1]);
   return arr;
