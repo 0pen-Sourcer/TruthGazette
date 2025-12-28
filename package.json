@@ -7,8 +7,15 @@
     "start": "vercel dev --listen 3000"
   },
   "dependencies": {
-    "node-fetch": "^2.6.7",
+    "@upstash/ratelimit": "^2.0.7",
     "@upstash/redis": "^1.11.0",
-    "@upstash/ratelimit": "^2.0.7"
+    "node-fetch": "^2.6.7",
+    "sharp": "^0.34.5",
+    "tesseract.js": "^7.0.0",
+    "@vercel/analytics": "^2.0.0"
+  },
+  "devDependencies": {
+    "express": "^5.2.1",
+    "vercel": "^50.1.3"
   }
-} 
+}

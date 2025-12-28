@@ -28,6 +28,9 @@
         } catch(e) { console.warn('Analytics init error', e); }
       })();
     </script>
+
+    <!-- Vercel Analytics (Next.js): To enable pageview tracking in Next.js, install @vercel/analytics and add <Analytics/> to your app's layout. For plain static HTML deployments, enable Vercel Analytics on the project in the Vercel Dashboard to collect metrics. -->
+    <meta name="vercel-analytics" content="enabled">
     <!-- Tesseract.js for client-side OCR -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2/dist/tesseract.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -628,28 +631,23 @@
                 };
                 reader.readAsDataURL(file);
 
-                // Run OCR in browser via Tesseract.js (silent background mode) and provide a promise we can wait for
+                // Run OCR in browser via Tesseract.js (silent background mode)
                 try {
                     // Run OCR silently in the background; no UI progress is shown to the user
                     window._ocrInProgress = true;
-                    // create a promise that resolves when OCR completes so investigate can wait briefly for it
-                    window._ocrPromise = new Promise((resolve) => { window._ocrResolve = resolve; });
                     Tesseract.recognize(file, 'eng', { logger: m => {
                         // logger kept for telemetry only; do not update UI
                     }}).then(function(result) {
                         uploadedImageText = (result && result.data && result.data.text) ? result.data.text.trim() : '';
                         // Do not display OCR text automatically; keep it for potential resubmits
                         window._ocrInProgress = false;
-                        if (window._ocrResolve) window._ocrResolve(uploadedImageText);
                     }).catch(function(err){
                         console.error('OCR error', err);
                         window._ocrInProgress = false;
-                        if (window._ocrResolve) window._ocrResolve('');
                     });
                 } catch (err) {
                     console.warn('Tesseract not available', err);
                     window._ocrInProgress = false;
-                    if (window._ocrResolve) window._ocrResolve('');
                 }
             }
         });
@@ -676,6 +674,19 @@
 
 
 
+            // If OCR is still running, wait silently up to 2.5s for it to complete (250ms polls)
+            if (typeof window._ocrInProgress !== 'undefined' && window._ocrInProgress) {
+                let waited = 0;
+                while (window._ocrInProgress && waited < 2500) {
+                    await new Promise(r => setTimeout(r, 250));
+                    waited += 250;
+                }
+                if (window._ocrInProgress) {
+                    alert('Image OCR is still running. Please wait a moment and try again.');
+                    return;
+                }
+            }
+
             analyzeBtn.disabled = true;
             resultArea.innerHTML = `
                 <div class="loading">
@@ -692,20 +703,6 @@
             }, 100);
 
             try {
-                // If OCR is running, wait a short time (silent) so we include extracted text when available (keeps user experience with single loading UI)
-                if (typeof window._ocrInProgress !== 'undefined' && window._ocrInProgress) {
-                    const waitMs = 2500; // wait up to 2.5s for OCR to finish silently
-                    try {
-                        if (window._ocrPromise) {
-                            await Promise.race([window._ocrPromise, new Promise((r) => setTimeout(r, waitMs))]);
-                        } else {
-                            await new Promise((r) => setTimeout(r, Math.min(waitMs, 300)));
-                        }
-                    } catch (e) {
-                        // ignore and proceed
-                    }
-                }
-
                 // Build payload and call server endpoint (server will handle API keys, grounding, rate-limiting, and caching)
                 const payload = {
                     text: textInput,
@@ -742,47 +739,10 @@
                 }
 
                 // Server returns { result, groundingMetadata }
-                let result = data.result;
+                const result = data.result;
                 const groundingMetadata = data.groundingMetadata || data.grounding_metadata || null;
                 
                 displayResult(result, groundingMetadata, data.quotaRemaining);
-
-                // Heuristic: if we provided OCR and the server result does not mention any of the OCR keywords, auto-resubmit once with direct OCR text to improve grounding
-                if (uploadedImageText) {
-                    try {
-                        const words = (uploadedImageText.toLowerCase().match(/\b[a-z]{3,}\b/g) || []).filter(w => !['the','and','with','from','this','that','are','for','not','was','his','her','she','he','our','you','your','that','which'].includes(w));
-                        const counts = {};
-                        words.forEach(w => counts[w] = (counts[w]||0) + 1);
-                        const keys = Object.keys(counts).sort((a,b) => counts[b]-counts[a]).slice(0,3);
-                        const combinedOutputText = ((result.analysis||'') + ' ' + (result.headline||'') + ' ' + JSON.stringify(result.sources||[])).toLowerCase();
-                        const hasKeyword = keys.some(k => combinedOutputText.includes(k));
-                        if (!hasKeyword && keys.length > 0 && !window._ocrAutoResubmitted) {
-                            // perform a single automatic resubmit using only the extracted OCR text as the prompt
-                            window._ocrAutoResubmitted = true;
-                            const retryNote = document.createElement('div');
-                            retryNote.style.padding = '8px 12px';
-                            retryNote.style.background = '#fff3cd';
-                            retryNote.style.border = '1px solid #ffeeba';
-                            retryNote.style.marginTop = '12px';
-                            retryNote.style.fontSize = '0.95em';
-                            retryNote.textContent = 'Refining analysis using extracted image text...';
-                            resultArea.insertBefore(retryNote, resultArea.firstChild);
-
-                            const retryPayload = { text: uploadedImageText, url: urlInput, image: uploadedImage, ocrText: uploadedImageText, sessionId: TG_SESSION, autoResubmit: true };
-                            const r2 = await fetch('/api/investigate', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Id': TG_SESSION }, body: JSON.stringify(retryPayload) });
-                            const d2 = await r2.json();
-                            if (r2.ok && d2.result) {
-                                result = d2.result;
-                                displayResult(result, d2.groundingMetadata || null, d2.quotaRemaining);
-                                retryNote.textContent = 'Analysis refined using extracted image text.';
-                            } else {
-                                retryNote.textContent = 'Refinement attempt failed.';
-                            }
-                        }
-                    } catch (err) {
-                        console.warn('Auto-resubmit heuristic error', err);
-                    }
-                }
 
                 // Auto-scroll to results after they load
                 setTimeout(() => {

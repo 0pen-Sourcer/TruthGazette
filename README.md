@@ -50,6 +50,43 @@ Environment variables used:
 - You can run the test harness in `test/run_tests.js` to validate behavior for the test cases in `TEST_CASES.md`.
 - The test runner also checks for accidental hardcoded keys in front-end files within this directory to prevent leaks.
 
+Vercel Analytics
+- To add Vercel Analytics in a Next.js app, install `@vercel/analytics` and add the `<Analytics/>` component to your app layout:
+
+  ```bash
+  npm install @vercel/analytics
+  ```
+
+  ```js
+  import { Analytics } from "@vercel/analytics/next";
+  export default function RootLayout({ children }) {
+    return (
+      <html>
+        <body>
+          {children}
+          <Analytics />
+        </body>
+      </html>
+    );
+  }
+  ```
+
+- For static deployments (plain HTML), enable Analytics in the Vercel Dashboard for your project; Vercel will collect metrics server-side. Once enabled, visits and pageviews will appear in your Vercel analytics dashboard shortly after deployment.
+
+Optional server-side OCR improvements:
+- For improved image OCR accuracy, install `sharp` (image preprocessing) and `tesseract.js` (server-side OCR fallback):
+
+```bash
+npm install --save sharp tesseract.js
+```
+
+- To run the image regression test, place your failing screenshot at `test/fixtures/failing_example.png` (or set `REGRESSION_IMAGE_PATH`) and run:
+
+```bash
+RUN_IMAGE_REGRESSION=1 node test/run_tests.js
+```
+
+
 ---
 
 ## 📑 License & contributing
