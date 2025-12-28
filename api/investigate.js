@@ -151,7 +151,58 @@ module.exports = async (req, res) => {
     let serverVisionMetadata = null;
     let serverVisionFailed = false;
     let serverVisionFailReason = '';
-    if (image && process.env.USE_SERVER_VISION !== '0') {
+
+    // Helper: fetch with timeout
+    function fetchWithTimeout(url, opts = {}, timeoutMs = 5000) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeoutMs);
+      return fetch(url, { ...opts, signal: controller.signal })
+        .finally(() => clearTimeout(id));
+    }
+
+    // Run only Tesseract if USE_SERVER_VISION is disabled and ocrOnly is requested
+    const tryServerTesseractOnly = async (buffer) => {
+      try {
+        const tjs = require('tesseract.js');
+        if (typeof tjs.recognize === 'function') {
+          // Use recognize API (may take time)
+          const res = await Promise.race([
+            tjs.recognize(buffer, 'eng', { logger: m => console.debug('tesseract:', m) }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('tesseract timeout')), 12000))
+          ]);
+          return res?.data?.text || '';
+        } else if (typeof tjs.createWorker === 'function') {
+          const { createWorker } = tjs;
+          const worker = createWorker({ logger: m => console.debug('tesseract:', m) });
+          try {
+            if (typeof worker.load === 'function') {
+              await worker.load();
+              await worker.loadLanguage('eng');
+              await worker.initialize('eng');
+              const res = await Promise.race([
+                worker.recognize(buffer),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('tesseract timeout')), 12000))
+              ]);
+              return res?.data?.text || '';
+            } else if (typeof worker.recognize === 'function') {
+              const res = await Promise.race([
+                worker.recognize(buffer),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('tesseract timeout')), 12000))
+              ]);
+              return res?.data?.text || '';
+            }
+          } finally {
+            try { if (typeof worker.terminate === 'function') await worker.terminate(); } catch (e) { /* ignore */ }
+          }
+        }
+      } catch (e) {
+        console.warn('Server-side Tesseract fallback failed', e && e.message);
+        return '';
+      }
+      return '';
+    };
+
+    if (image) {
       try {
         const m = (image || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
         if (m) {
@@ -175,16 +226,20 @@ module.exports = async (req, res) => {
             console.warn('Image preprocessing (sharp) unavailable or failed:', e && e.message);
           }
 
-          async function runVisionOnBuffer(buf) {
-            const b64b = buf.toString('base64');
-            const visionReq = { requests: [{ image: { content: b64b }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }, { type: 'TEXT_DETECTION' }] }] };
-            const vResp = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(visionReq) });
-            const vData = await vResp.json();
-            return vData;
-          }
+          // If Vision is enabled, try it with a short timeout; otherwise skip directly to Tesseract
+          let vOrig = null;
+          let vEnh = null;
+          if (process.env.USE_SERVER_VISION !== '0') {
+            async function runVisionOnBuffer(buf) {
+              const b64b = buf.toString('base64');
+              const visionReq = { requests: [{ image: { content: b64b }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }, { type: 'TEXT_DETECTION' }] }] };
+              const vResp = await fetchWithTimeout(`https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(visionReq) }, 4000);
+              try { return await vResp.json(); } catch (e) { return { error: { message: 'vision returned non-json or failed' } }; }
+            }
 
-          const vOrig = await runVisionOnBuffer(imgBuffer);
-          const vEnh = (enhancedBuffer !== imgBuffer) ? await runVisionOnBuffer(enhancedBuffer) : null;
+            vOrig = await runVisionOnBuffer(imgBuffer);
+            vEnh = (enhancedBuffer !== imgBuffer) ? await runVisionOnBuffer(enhancedBuffer) : null;
+          }
 
           const tOrig = vOrig.responses?.[0]?.fullTextAnnotation?.text || vOrig.responses?.[0]?.textAnnotations?.[0]?.description || '';
           const tEnh = vEnh ? (vEnh.responses?.[0]?.fullTextAnnotation?.text || vEnh.responses?.[0]?.textAnnotations?.[0]?.description || '') : '';
@@ -205,37 +260,11 @@ module.exports = async (req, res) => {
 
           // If Vision returned insufficient text or errored, try server-side Tesseract fallback (if available)
           if ((!serverVisionText || serverVisionText.trim().length < 20) || serverVisionFailed) {
-            // try on enhancedBuffer first, then original
             const buffersToTry = enhancedBuffer ? [enhancedBuffer, imgBuffer] : [imgBuffer];
             for (const bufTry of buffersToTry) {
               try {
-                const tjs = require('tesseract.js');
-                let tessText = '';
-                // Support multiple tesseract.js API shapes (worker-based or direct recognize)
-                if (typeof tjs.recognize === 'function') {
-                  const res = await tjs.recognize(bufTry, 'eng', { logger: m => console.debug('tesseract:', m) });
-                  tessText = res?.data?.text || '';
-                } else if (typeof tjs.createWorker === 'function') {
-                  const { createWorker } = tjs;
-                  const worker = createWorker({ logger: m => console.debug('tesseract:', m) });
-                  if (typeof worker.load === 'function') {
-                    await worker.load();
-                    await worker.loadLanguage('eng');
-                    await worker.initialize('eng');
-                    const { data: { text } } = await worker.recognize(bufTry);
-                    tessText = text || '';
-                    if (typeof worker.terminate === 'function') await worker.terminate();
-                  } else if (typeof worker.recognize === 'function') {
-                    const { data: { text } } = await worker.recognize(bufTry);
-                    tessText = text || '';
-                    if (typeof worker.terminate === 'function') await worker.terminate();
-                  } else {
-                    throw new Error('Unsupported tesseract.js worker API');
-                  }
-                } else {
-                  throw new Error('tesseract.js not usable');
-                }
-
+                // Run Tesseract with a bounded timeout
+                const tessText = await tryServerTesseractOnly(bufTry);
                 if (tessText && tessText.trim().length > 0) {
                   serverVisionText = tessText.trim();
                   serverVisionMetadata = serverVisionMetadata || {};
@@ -253,7 +282,36 @@ module.exports = async (req, res) => {
               }
             }
 
-            // If still no OCR text and the env flag is set, try model-based OCR using the Generative API (similar to image-gen-test approach)
+            // If still no OCR text and model fallback enabled, try model-based OCR (slow; controlled by USE_MODEL_OCR)
+            if ((!serverVisionText || serverVisionText.trim().length < 20) && process.env.USE_MODEL_OCR === '1') {
+              try {
+                const b64b = bufTry.toString('base64');
+                const mime = m[1] || 'image/png';
+                const modelReq = {
+                  contents: [{ parts: [ { inline_data: { mime_type: mime, data: b64b } }, { text: 'Extract and return ONLY the textual content present in the provided image. Return plain text only, no explanation. If no text, return an empty string.' } ] }],
+                  generationConfig: { temperature: 0.0 }
+                };
+                const MODEL_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
+                const mr = await fetch(MODEL_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(modelReq) });
+                const mtextResp = await mr.json();
+                const modelText = mtextResp.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                const codeMatch = modelText.match(/```([\s\S]*?)```/);
+                let extracted = codeMatch ? codeMatch[1].trim() : modelText.trim();
+                if (extracted && extracted.length > 10) {
+                  serverVisionText = extracted;
+                  serverVisionMetadata = serverVisionMetadata || {};
+                  serverVisionMetadata.model_ocr = extracted.slice(0, 2000);
+                  ocrText = extracted;
+                  serverVisionFailed = false;
+                }
+              } catch (e) {
+                console.warn('Model-based OCR failed', e && e.message);
+                serverVisionMetadata = serverVisionMetadata || {};
+                serverVisionMetadata.model_ocr_error = e && e.message;
+              }
+            }
+          }
+            // If still no OCR text and the env flag is set, try model-based OCR using the Generative API
             if ((!serverVisionText || serverVisionText.trim().length < 20) && process.env.USE_MODEL_OCR === '1') {
               try {
                 const b64b = bufTry.toString('base64');
