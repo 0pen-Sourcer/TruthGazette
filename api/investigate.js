@@ -367,10 +367,30 @@ module.exports = async (req, res) => {
     } else {
       const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
       const r = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
-      data = await r.json();
-      if (!r.ok) return res.status(500).json({ error: data.error?.message || 'Provider error' });
-      aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      groundingMetadata = data.candidates?.[0]?.groundingMetadata || null;
+
+      // Read provider response as text first (guard against non-JSON error pages or plain text) and try to parse JSON
+      let providerText = '';
+      try {
+        providerText = await r.text();
+      } catch (e) {
+        console.warn('Failed to read provider response body', e && e.message);
+      }
+
+      // Attempt JSON parse, but if it fails, wrap the text into a structured error object
+      try {
+        data = providerText ? JSON.parse(providerText) : null;
+      } catch (e) {
+        data = { error: { message: providerText || 'Provider returned non-JSON response' } };
+      }
+
+      if (!r.ok) {
+        const bodyPreview = (providerText || '').slice(0, 2000);
+        console.warn('Generative provider returned error', { status: r.status, bodyPreview });
+        return res.status(502).json({ error: data?.error?.message || 'Provider error', providerStatus: r.status, providerBody: bodyPreview });
+      }
+
+      aiText = (data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text) || '';
+      groundingMetadata = data?.candidates?.[0]?.groundingMetadata || null;
     }
 
     // Parse model response and extract JSON
