@@ -252,6 +252,37 @@ module.exports = async (req, res) => {
                 serverVisionMetadata.tesseract_error = e && e.message;
               }
             }
+
+            // If still no OCR text and the env flag is set, try model-based OCR using the Generative API (similar to image-gen-test approach)
+            if ((!serverVisionText || serverVisionText.trim().length < 20) && process.env.USE_MODEL_OCR === '1') {
+              try {
+                const b64b = bufTry.toString('base64');
+                const mime = m[1] || 'image/png';
+                const modelReq = {
+                  contents: [{ parts: [ { inline_data: { mime_type: mime, data: b64b } }, { text: 'Extract and return ONLY the textual content present in the provided image. Return plain text only, no explanation. If no text, return an empty string.' } ] }],
+                  generationConfig: { temperature: 0.0 }
+                };
+                const MODEL_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
+                const mr = await fetch(MODEL_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(modelReq) });
+                const mtextResp = await mr.json();
+                const modelText = mtextResp.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                // Prefer text inside code block if returned, or raw text
+                const codeMatch = modelText.match(/```([\s\S]*?)```/);
+                let extracted = codeMatch ? codeMatch[1].trim() : modelText.trim();
+                // If model extracted meaningful text, adopt it
+                if (extracted && extracted.length > 10) {
+                  serverVisionText = extracted;
+                  serverVisionMetadata = serverVisionMetadata || {};
+                  serverVisionMetadata.model_ocr = extracted.slice(0, 2000);
+                  ocrText = extracted;
+                  serverVisionFailed = false;
+                }
+              } catch (e) {
+                console.warn('Model-based OCR failed', e && e.message);
+                serverVisionMetadata = serverVisionMetadata || {};
+                serverVisionMetadata.model_ocr_error = e && e.message;
+              }
+            }
           }
 
           // Helper: clean OCR text for readability (keep raw text too)
