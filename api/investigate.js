@@ -180,7 +180,7 @@ module.exports = async (req, res) => {
       prompt += `\nIMAGE INCLUDED: OCR text (if available) has been included above. Please analyze the image context and verify any claims.\n`;
       // If no readable text was provided but an image exists, instruct the model to analyze the image visually
       if (!combinedText) {
-        prompt += `\nNOTE: No readable text was detected in the provided image. Please analyze the image visually: describe visual elements, assess whether the image supports or contradicts factual claims, suggest concrete search queries that a researcher could use to ground or verify the image (e.g., reverse-image or news search terms), and avoid returning 'No content' as a final answer if the image contains verifiable visual evidence.\n`;
+        prompt += `\nNOTE: No readable text was detected in the provided image. IMPORTANT: Do NOT speculate or assert specific events from only a visual inspection (for example, do not claim 'this is a tornado'). If the image lacks textual claims, dates, locations, or other verifiable identifiers, return "UNCERTAIN" and list which evidence would be needed to verify the claim (e.g., original caption, date, location, reputable news source). If visual evidence **can** be linked to verifiable sources, cite them with URLs.\n`;
       }
     }
 
