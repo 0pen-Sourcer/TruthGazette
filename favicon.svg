@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="The Truth Gazette favicon">
+  <!-- Match site background color for seamless integration -->
+  <rect width="64" height="64" rx="8" fill="#f4f1e8"/>
+  <!-- newspaper body (accented with primary color) -->
+  <g transform="translate(8,10)">
+    <rect width="48" height="44" rx="3" fill="#ffffff" stroke="#e6e0d6" stroke-width="0.6"/>
+    <!-- folded corner -->
+    <path d="M42 0 L48 6 L42 6 Z" fill="#f4f1e8"/>
+    <!-- masthead stripe in primary color -->
+    <rect x="6" y="4" width="36" height="4" rx="1" fill="#c41e3a"/>
+    <!-- text lines (primary color, smaller) -->
+    <rect x="6" y="12" width="36" height="3" rx="1" fill="#c41e3a" opacity="0.95"/>
+    <rect x="6" y="18" width="28" height="3" rx="1" fill="#c41e3a" opacity="0.95"/>
+    <rect x="6" y="24" width="22" height="3" rx="1" fill="#c41e3a" opacity="0.95"/>
+    <rect x="6" y="30" width="18" height="3" rx="1" fill="#c41e3a" opacity="0.95"/>
+    <!-- small image placeholder block -->
+    <rect x="6" y="34" width="10" height="8" rx="1" fill="#c41e3a" opacity="0.95"/>
+    <!-- Add TG into this tiny block, centered, using Playfair Display to match site -->
+    <text x="11" y="38" font-family="Playfair Display, serif" font-size="6" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">TG</text>
+  </g>
+
+</svg>
