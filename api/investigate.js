@@ -87,7 +87,8 @@ module.exports = async (req, res) => {
       }
     }
 
-    const { text = '', url = '', image = null, ocrText = '' } = req.body || {};
+    const { text = '', url = '', image = null } = req.body || {};
+    let ocrText = (req.body && req.body.ocrText) || '';
 
     // daily quota enforcement (per session or IP)
     const DAILY_LIMIT = parseInt(process.env.DAILY_QUOTA || '200', 10);
@@ -143,28 +144,152 @@ module.exports = async (req, res) => {
     // Build server-side prompt and request body — keep prompt on server to avoid client tampering
     const MODEL = process.env.GEN_MODEL || 'gemini-2.5-flash';
     const API_KEY = process.env.GEN_API_KEY; // MUST be set in Vercel/Env
-    if (!API_KEY) return res.status(500).json({ error: 'Missing server API key' });
+    if (!API_KEY && process.env.LOCAL_OCR_TEST !== '1' && process.env.LOCAL_MOCK_MODEL !== '1') return res.status(500).json({ error: 'Missing server API key' });
 
     // Server-side Vision OCR (primary) — enabled by default. Set USE_SERVER_VISION=0 to disable.
     let serverVisionText = '';
     let serverVisionMetadata = null;
+    let serverVisionFailed = false;
+    let serverVisionFailReason = '';
     if (image && process.env.USE_SERVER_VISION !== '0') {
       try {
         const m = (image || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
         if (m) {
           const b64 = m[2];
-          const visionReq = { requests: [{ image: { content: b64 }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }, { type: 'TEXT_DETECTION' }] }] };
-          const vResp = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(visionReq) });
-          const vData = await vResp.json();
-          serverVisionMetadata = vData;
-          serverVisionText = vData.responses?.[0]?.fullTextAnnotation?.text || vData.responses?.[0]?.textAnnotations?.[0]?.description || '';
+          const imgBuffer = Buffer.from(b64, 'base64');
+
+          // Try to preprocess the image using sharp if available (resize, grayscale, normalize, sharpen)
+          let enhancedBuffer = imgBuffer;
+          let usedSharp = false;
+          try {
+            const sharp = require('sharp');
+            usedSharp = true;
+            enhancedBuffer = await sharp(imgBuffer)
+              .resize({ width: 1600, withoutEnlargement: true })
+              .grayscale()
+              .normalise()
+              .sharpen()
+              .toBuffer();
+          } catch (e) {
+            // sharp not available or failed — continue with original buffer
+            console.warn('Image preprocessing (sharp) unavailable or failed:', e && e.message);
+          }
+
+          async function runVisionOnBuffer(buf) {
+            const b64b = buf.toString('base64');
+            const visionReq = { requests: [{ image: { content: b64b }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }, { type: 'TEXT_DETECTION' }] }] };
+            const vResp = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(visionReq) });
+            const vData = await vResp.json();
+            return vData;
+          }
+
+          const vOrig = await runVisionOnBuffer(imgBuffer);
+          const vEnh = (enhancedBuffer !== imgBuffer) ? await runVisionOnBuffer(enhancedBuffer) : null;
+
+          const tOrig = vOrig.responses?.[0]?.fullTextAnnotation?.text || vOrig.responses?.[0]?.textAnnotations?.[0]?.description || '';
+          const tEnh = vEnh ? (vEnh.responses?.[0]?.fullTextAnnotation?.text || vEnh.responses?.[0]?.textAnnotations?.[0]?.description || '') : '';
+
+          serverVisionMetadata = { original: vOrig, enhanced: vEnh, preprocessing: { usedSharp } };
+
+          // detect API error and surface failure reason
+          const vError = vOrig.responses?.[0]?.error || vEnh?.responses?.[0]?.error;
+          if (vError) {
+            serverVisionFailed = true;
+            serverVisionFailReason = vError.message || JSON.stringify(vError);
+            serverVisionMetadata.error = vError;
+            console.warn('Vision API error:', vError);
+          }
+
+          // prefer enhanced text if it's longer/clearer
+          serverVisionText = (tEnh && tEnh.length > tOrig.length) ? tEnh : tOrig;
+
+          // If Vision returned insufficient text or errored, try server-side Tesseract fallback (if available)
+          if ((!serverVisionText || serverVisionText.trim().length < 20) || serverVisionFailed) {
+            // try on enhancedBuffer first, then original
+            const buffersToTry = enhancedBuffer ? [enhancedBuffer, imgBuffer] : [imgBuffer];
+            for (const bufTry of buffersToTry) {
+              try {
+                const tjs = require('tesseract.js');
+                let tessText = '';
+                // Support multiple tesseract.js API shapes (worker-based or direct recognize)
+                if (typeof tjs.recognize === 'function') {
+                  const res = await tjs.recognize(bufTry, 'eng', { logger: m => console.debug('tesseract:', m) });
+                  tessText = res?.data?.text || '';
+                } else if (typeof tjs.createWorker === 'function') {
+                  const { createWorker } = tjs;
+                  const worker = createWorker({ logger: m => console.debug('tesseract:', m) });
+                  if (typeof worker.load === 'function') {
+                    await worker.load();
+                    await worker.loadLanguage('eng');
+                    await worker.initialize('eng');
+                    const { data: { text } } = await worker.recognize(bufTry);
+                    tessText = text || '';
+                    if (typeof worker.terminate === 'function') await worker.terminate();
+                  } else if (typeof worker.recognize === 'function') {
+                    const { data: { text } } = await worker.recognize(bufTry);
+                    tessText = text || '';
+                    if (typeof worker.terminate === 'function') await worker.terminate();
+                  } else {
+                    throw new Error('Unsupported tesseract.js worker API');
+                  }
+                } else {
+                  throw new Error('tesseract.js not usable');
+                }
+
+                if (tessText && tessText.trim().length > 0) {
+                  serverVisionText = tessText.trim();
+                  serverVisionMetadata = serverVisionMetadata || {};
+                  serverVisionMetadata.tesseract = serverVisionMetadata.tesseract || {};
+                  serverVisionMetadata.tesseract.triedOn = serverVisionMetadata.tesseract.triedOn || [];
+                  serverVisionMetadata.tesseract.triedOn.push({ length: tessText.length });
+                  serverVisionMetadata.tesseract.text = (serverVisionMetadata.tesseract.text || '') + '\n' + tessText.slice(0, 2000);
+                  serverVisionFailed = false; // we've recovered
+                }
+                if (serverVisionText && serverVisionText.trim().length > 0) break;
+              } catch (e) {
+                console.warn('Server-side Tesseract fallback unavailable or failed', e && e.message);
+                serverVisionMetadata = serverVisionMetadata || {};
+                serverVisionMetadata.tesseract_error = e && e.message;
+              }
+            }
+          }
+
+          // Helper: clean OCR text for readability (keep raw text too)
+          function cleanOcrText(t) {
+            if (!t) return '';
+            // remove carriage returns, collapse multiple spaces, trim
+            let s = t.replace(/\r/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
+            // collapse multiple newlines and convert to spaces, preserve sentence punctuation
+            s = s.split(/\n+/).map(l => l.trim()).filter(Boolean).join(' ');
+            // normalize spaces before punctuation and remove stray non-printables
+            s = s.replace(/\s+([,.!?;:])/g, '$1').replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+            // collapse repeating spaces
+            s = s.replace(/ {2,}/g, ' ');
+            return s.trim();
+          }
+
           if (serverVisionText) {
+            // store raw and cleaned versions
+            const raw = serverVisionText;
+            const cleaned = cleanOcrText(raw);
+            serverVisionMetadata = serverVisionMetadata || {};
+            serverVisionMetadata.ocr_raw = raw.slice(0, 5000);
+            serverVisionMetadata.ocr_clean = cleaned.slice(0, 5000);
             // prefer server OCR over client-provided OCR
-            ocrText = serverVisionText;
+            ocrText = cleaned || raw;
+            serverVisionText = cleaned || raw;
+          } else if (serverVisionFailed && serverVisionFailReason) {
+            // attach failure message for transparency
+            serverVisionMetadata = serverVisionMetadata || {};
+            serverVisionMetadata.failure_reason = serverVisionFailReason;
           }
         }
       } catch (e) {
         console.warn('Server vision OCR failed', e);
+        serverVisionFailed = true;
+        serverVisionFailReason = e && e.message;
+        serverVisionMetadata = serverVisionMetadata || {};
+        serverVisionMetadata.failure_reason = serverVisionFailReason;
       }
     }
 
@@ -172,7 +297,10 @@ module.exports = async (req, res) => {
 
     // If the request included OCR text from the image, include it explicitly for grounding
     const combinedText = [sanitizedText, (ocrText || '').slice(0, 3000)].filter(Boolean).join('\n\n');
-    if (combinedText) prompt += `\nTEXT TO ANALYZE:\n"${combinedText}"\n`;
+    if (combinedText) {
+      prompt += `\nTEXT TO ANALYZE:\n"${combinedText}"\n`;
+      prompt += `\nIMPORTANT: The text above is extracted from the provided image (OCR) or user input; you MUST use it as the primary evidence for your analysis. Do NOT invent facts or hallucinate details that are not present in the provided text or verifiable sources. If you cannot verify the claim with reliable sources, respond with \"UNCERTAIN\" and explain exactly what evidence would be required to verify or falsify the claim.\n`;
+    }
     if (url) prompt += `\nURL PROVIDED: ${url}\nPlease use your knowledge and if possible cite credible sources to verify information from this URL and check its credibility.\n`;
 
     if (image) {
@@ -180,11 +308,36 @@ module.exports = async (req, res) => {
       prompt += `\nIMAGE INCLUDED: OCR text (if available) has been included above. Please analyze the image context and verify any claims.\n`;
       // If no readable text was provided but an image exists, instruct the model to analyze the image visually
       if (!combinedText) {
-        prompt += `\nNOTE: No readable text was detected in the provided image. Please analyze the image visually: describe visual elements, assess whether the image supports or contradicts factual claims, suggest concrete search queries that a researcher could use to ground or verify the image (e.g., reverse-image or news search terms), and avoid returning 'No content' as a final answer if the image contains verifiable visual evidence.\n`;
+        prompt += `\nNOTE: No readable text was detected in the provided image. IMPORTANT: If the image does not contain textual claims or verifiable identifiers (dates, names, locations) that can be grounded in credible sources, do NOT speculate or assert specific events (for example, do not claim 'this is a tornado'). Instead, return "UNCERTAIN" and explain exactly what evidence would be required to verify the claim (e.g., original caption, date, location, or a reputable news source). If visual evidence does exist and can be reliably linked to verifiable sources, provide those sources and cite them.\n`;
+      }
+
+      // If server-side vision failed, add a clear note — do NOT hallucinate visual details; prefer UNCERTAIN
+      if (serverVisionFailed) {
+        prompt += `\nSERVER_VISION_ERROR: The server failed to extract text from the provided image (reason: ${serverVisionFailReason}). There is no OCR text available from the server. DO NOT invent or hallucinate visual facts that are not verified; if you cannot ground claims via credible sources or explicit textual evidence, return \"UNCERTAIN\" and explain what evidence would be required to verify the claim.\n`;
       }
     }
 
     prompt += `\nRespond in the following JSON format:\n{\n  "verdict": "FAKE" or "REAL" or "UNCERTAIN",\n  "confidence": [number between 65-95],\n  "confidence_explanation": "[Brief justification for the numeric confidence — cite evidence: number and quality of sources, grounding search hits, and strength of claims]",\n  "headline": "[Create a dramatic newspaper-style headline about your verdict]",\n  "analysis": "[Detailed explanation as if writing a newspaper article, 2-3 short paragraphs]",\n  "keyFactors": ["factor1", "factor2"],\n  "sources": [ {"title":"source title","url":"https://..."} ]\n}\n\nIMPORTANT: Provide real verifiable URLs when available from reputable institutions (government, major news organizations, research orgs). If only community or opinion sources are found, include them only for INTERNAL cross-check and do not provide them in the 'sources' output.\nNote: Avoid always using the same numeric confidence; tailor the number to the evidence and explain why in 'confidence_explanation'.\n`;
+
+    // LOCAL_OCR_TEST: short-circuit for local testing of OCR pipeline (sharp + tesseract)
+    if (process.env.LOCAL_OCR_TEST === '1') {
+      const testResult = {
+        verdict: 'UNCERTAIN',
+        confidence: 65,
+        confidence_explanation: 'Local OCR test: returning OCR outputs without calling external model.',
+        headline: 'LOCAL OCR TEST RESULT',
+        analysis: 'This response is a local-only diagnostic containing the server-side OCR output and metadata. No generative model call was performed.',
+        keyFactors: ['Local OCR test'],
+        sources: []
+      };
+      if (serverVisionText) testResult.vision_ocr = serverVisionText;
+      if (serverVisionMetadata) testResult.vision_metadata = serverVisionMetadata;
+      if (serverVisionFailed) {
+        testResult.vision_failed = true;
+        testResult.vision_failed_reason = serverVisionFailReason;
+      }
+      return res.status(200).json({ result: testResult, groundingMetadata: null, quotaRemaining });
+    }
 
     const requestBody = {
       contents: [{ parts: [{ text: prompt }] }],
@@ -193,14 +346,34 @@ module.exports = async (req, res) => {
 
     if (url) requestBody.tools = [{ google_search: {} }];
 
-    // Call Generative API server-side
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
-    const r = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
-    const data = await r.json();
-    if (!r.ok) return res.status(500).json({ error: data.error?.message || 'Provider error' });
+    // Call Generative API server-side (or use a local mock when LOCAL_MOCK_MODEL=1)
+    let aiText = '';
+    let data = null;
+    let groundingMetadata = null;
+    if (process.env.LOCAL_MOCK_MODEL === '1') {
+      // Simple deterministic mock to validate that OCR text is used by the model
+      const mockResult = {
+        verdict: (combinedText.toLowerCase().includes('trump') && combinedText.toLowerCase().includes('epstein')) ? 'UNCERTAIN' : 'UNCERTAIN',
+        confidence: 72,
+        confidence_explanation: 'Local mock: based on OCR-derived text',
+        headline: 'Mock result based on OCR',
+        analysis: `Local mock analysis using extracted OCR:\n${(ocrText || '').slice(0,300)}`,
+        keyFactors: ['OCR evidence'],
+        sources: []
+      };
+      aiText = JSON.stringify(mockResult);
+      data = { candidates: [{ content: { parts: [{ text: aiText }] } }] };
+      groundingMetadata = null;
+    } else {
+      const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
+      const r = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
+      data = await r.json();
+      if (!r.ok) return res.status(500).json({ error: data.error?.message || 'Provider error' });
+      aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      groundingMetadata = data.candidates?.[0]?.groundingMetadata || null;
+    }
 
     // Parse model response and extract JSON
-    const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const jsonMatch = aiText.match(/\{[\s\S]*\}/);
     const jsonText = jsonMatch ? jsonMatch[0] : null;
     let result = null;
@@ -210,11 +383,13 @@ module.exports = async (req, res) => {
       result = { analysis: aiText, verdict: 'UNCERTAIN', confidence: 65 };
     }
 
-    const groundingMetadata = data.candidates?.[0]?.groundingMetadata || null;
-
     // Attach any server-side vision OCR metadata/output for transparency
     if (serverVisionText) result.vision_ocr = serverVisionText;
     if (serverVisionMetadata) result.vision_metadata = serverVisionMetadata;
+    if (serverVisionFailed) {
+      result.vision_failed = true;
+      result.vision_failed_reason = serverVisionFailReason;
+    }
 
     // Compute a deterministic, calibrated confidence score and explanation from model output
     function computeConfidenceAndExplanation(res, grounding) {
@@ -294,6 +469,14 @@ module.exports = async (req, res) => {
       } catch (e) {
         console.warn('Re-run after no-content failed', e);
       }
+    }
+
+    // Ensure any server-side vision metadata is persisted even after a possible rerun
+    if (serverVisionText) out.result.vision_ocr = serverVisionText;
+    if (serverVisionMetadata) out.result.vision_metadata = serverVisionMetadata;
+    if (serverVisionFailed) {
+      out.result.vision_failed = true;
+      out.result.vision_failed_reason = serverVisionFailReason;
     }
 
     if (useUpstash && redisClient) {
