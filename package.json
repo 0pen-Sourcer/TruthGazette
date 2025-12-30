@@ -4,11 +4,14 @@
   "private": true,
   "scripts": {
     "test": "node test/run_tests.js",
+    "unit-test": "node test/source_verification.test.js",
     "start": "vercel dev --listen 3000"
   },
+
   "dependencies": {
     "node-fetch": "^2.6.7",
     "@upstash/redis": "^1.11.0",
-    "@upstash/ratelimit": "^2.0.7"
+    "@upstash/ratelimit": "^2.0.7",
+    "@vercel/analytics": "^1.4.0"
   }
 } 

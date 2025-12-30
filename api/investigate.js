@@ -11,6 +11,7 @@
 
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const crypto = require('crypto');
+const { verifySource } = require('../lib/sourceVerifier');
 
 // Optionally use Upstash rate-limit & Redis if configured
 let useUpstash = false;
@@ -186,6 +187,9 @@ module.exports = async (req, res) => {
 
     prompt += `\nRespond in the following JSON format:\n{\n  "verdict": "FAKE" or "REAL" or "UNCERTAIN",\n  "confidence": [number between 65-95],\n  "confidence_explanation": "[Brief justification for the numeric confidence — cite evidence: number and quality of sources, grounding search hits, and strength of claims]",\n  "headline": "[Create a dramatic newspaper-style headline about your verdict]",\n  "analysis": "[Detailed explanation as if writing a newspaper article, 2-3 short paragraphs]",\n  "keyFactors": ["factor1", "factor2"],\n  "sources": [ {"title":"source title","url":"https://..."} ]\n}\n\nIMPORTANT: Provide real verifiable URLs when available from reputable institutions (government, major news organizations, research orgs). If only community or opinion sources are found, include them only for INTERNAL cross-check and do not provide them in the 'sources' output.\nNote: Avoid always using the same numeric confidence; tailor the number to the evidence and explain why in 'confidence_explanation'.\n`;
 
+    // Extra instruction to prevent fabrication of URLs/dates. Server will verify any URLs returned by the model.
+    prompt += `\nCRITICAL: Do NOT invent, rewrite, or normalize source URLs or publication dates. If you cannot find a reliable URL for a claim, respond with {"url":"SOURCE_UNAVAILABLE"} and do not fabricate one. When stating a publication date, include the exact text excerpt that supports it from the source.\n`;
+
     const requestBody = {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { temperature: 0.7, topK: 40, topP: 0.95 }
@@ -216,28 +220,61 @@ module.exports = async (req, res) => {
     if (serverVisionText) result.vision_ocr = serverVisionText;
     if (serverVisionMetadata) result.vision_metadata = serverVisionMetadata;
 
+    // Verify model-provided sources (do not trust unverified URLs). This fetches the URL and confirms status and excerpt/date where possible.
+    if (Array.isArray(result.sources)) {
+      for (let i = 0; i < result.sources.length; i++) {
+        const s = result.sources[i] || {};
+        try {
+          if (!s.url || s.url === 'SOURCE_UNAVAILABLE') {
+            s.verification = { ok: false, reason: 'source_unavailable' };
+            continue;
+          }
+          const v = await verifySource(s.url, s.excerpt || '');
+          s.verification = v;
+          // If archive was used, attach archived url
+          if (v.archivedUrl) s.archivedUrl = v.archivedUrl;
+          // If excerpt was not found, mark as suspicious
+          if (s.verification.ok && s.excerpt && !s.verification.excerptFound) {
+            s.verification.excerptFound = false;
+            s.verification.reason = (s.verification.reason || '') + '; excerpt-mismatch';
+          }
+        } catch (e) {
+          s.verification = { ok: false, reason: 'verify-error' };
+        }
+      }
+    }
+
     // Compute a deterministic, calibrated confidence score and explanation from model output
     function computeConfidenceAndExplanation(res, grounding) {
       const verdict = (res.verdict || 'UNCERTAIN').toUpperCase();
       const sources = Array.isArray(res.sources) ? res.sources : [];
+      // Consider only verified sources for boosts
+      const verified = sources.filter(s => s && s.verification && s.verification.ok);
+      const unverifiedCount = sources.length - verified.length;
+
       let score = 65;
       if (verdict === 'REAL') score = 75;
       else if (verdict === 'FAKE') score = 72;
       else score = 65;
 
-      // reward number of sources
-      if (sources.length >= 1) score += 5;
-      if (sources.length >= 3) score += 8;
+      // reward number of verified sources
+      if (verified.length >= 1) score += 5;
+      if (verified.length >= 3) score += 8;
 
-      // boost for trusted domains
+      // boost for trusted domains among verified sources
       const trusted = ['gov','edu','nytimes.com','bbc.co.uk','theguardian.com','reuters.com','apnews.com'];
-      const hasTrusted = sources.some(s => {
+      const hasTrusted = verified.some(s => {
         try {
           const u = (s.url || '').toLowerCase();
           return trusted.some(t => u.includes(t));
         } catch (e) { return false; }
       });
       if (hasTrusted) score += 8;
+
+      // penalty for unverified sources
+      if (unverifiedCount > 0) {
+        score -= Math.min(10, unverifiedCount * 5); // penalize up to 10 points
+      }
 
       // grounding metadata hints
       if (grounding && Array.isArray(grounding.found) && grounding.found.length > 0) score += 4;
@@ -247,7 +284,7 @@ module.exports = async (req, res) => {
 
       const parts = [];
       parts.push(`Verdict: ${verdict}`);
-      parts.push(`${sources.length} source(s)`);
+      parts.push(`${verified.length} verified source(s) and ${unverifiedCount} unverified`);
       if (hasTrusted) parts.push('Includes trusted source(s)');
       if (grounding && Array.isArray(grounding.found) && grounding.found.length > 0) parts.push('Grounding search found evidence');
       const explanation = parts.join('; ');

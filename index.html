@@ -10,7 +10,9 @@
     <link rel="shortcut icon" href="/favicon.svg">
     <!-- Tesseract.js for client-side OCR -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2/dist/tesseract.min.js"></script>
-    <!-- Vercel Analytics note: enable analytics in Vercel dashboard to collect pageviews -->
+    <!-- Vercel Web Analytics -->
+    <script>window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };</script>
+    <script defer src="/_vercel/insights/script.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * {
@@ -642,10 +644,27 @@
         function clearAll() {
             document.getElementById('newsInput').value = '';
             document.getElementById('urlInput').value = '';
-            document.getElementById('imageInput').value = '';
+            // Reset file input and preview image
+            const imgInput = document.getElementById('imageInput');
+            try { imgInput.value = null; } catch (e) { imgInput.value = ''; }
+            const preview = document.getElementById('previewImg');
+            if (preview) preview.src = '';
             document.getElementById('imagePreview').style.display = 'none';
-            document.getElementById('resultArea').innerHTML = '';
+
+            // Clear OCR state and UI
             uploadedImage = null;
+            uploadedImageText = '';
+            window._ocrInProgress = false;
+            const ocrStatus = document.getElementById('ocrStatus');
+            if (ocrStatus) ocrStatus.style.display = 'none';
+            const ocrTextEl = document.getElementById('ocrText');
+            if (ocrTextEl) ocrTextEl.textContent = '';
+
+            // Clear results
+            document.getElementById('resultArea').innerHTML = '';
+            // Optional: focus headline input
+            const newsInput = document.getElementById('newsInput');
+            if (newsInput) newsInput.focus();
         }
 
         async function investigateNews() {
