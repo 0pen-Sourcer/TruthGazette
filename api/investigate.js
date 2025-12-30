@@ -238,6 +238,16 @@ module.exports = async (req, res) => {
             s.verification.excerptFound = false;
             s.verification.reason = (s.verification.reason || '') + '; excerpt-mismatch';
           }
+          // If model claimed a publication date, compare with discovered date and flag mismatch
+          const claimedDate = s.date || s.published_date || s.publishedDate || s.pubDate || null;
+          if (claimedDate && s.verification && s.verification.foundDate) {
+            const cd = String(claimedDate).slice(0,10);
+            const fd = String(s.verification.foundDate).slice(0,10);
+            if (cd && fd && !fd.includes(cd) && !cd.includes(fd)) {
+              s.verification.dateMismatch = true;
+              s.verification.reason = (s.verification.reason || '') + '; date-mismatch';
+            }
+          }
         } catch (e) {
           s.verification = { ok: false, reason: 'verify-error' };
         }
@@ -279,6 +289,10 @@ module.exports = async (req, res) => {
       // grounding metadata hints
       if (grounding && Array.isArray(grounding.found) && grounding.found.length > 0) score += 4;
 
+      // penalty for any date mismatch in verified sources
+      const hasDateMismatch = sources.some(s => s && s.verification && s.verification.dateMismatch);
+      if (hasDateMismatch) score -= 4;
+
       // clamp into allowed range
       score = Math.max(65, Math.min(95, score));
 
@@ -292,6 +306,16 @@ module.exports = async (req, res) => {
       return { score, explanation };
     }
 
+    // build a verification summary (verified/unverified counts and date mismatches)
+    const verificationSummary = { verifiedCount: 0, unverifiedCount: 0, dateMismatches: [] };
+    if (Array.isArray(result.sources)) {
+      result.sources.forEach(s => {
+        if (s && s.verification && s.verification.ok) verificationSummary.verifiedCount++;
+        else verificationSummary.unverifiedCount++;
+        if (s && s.verification && s.verification.dateMismatch) verificationSummary.dateMismatches.push(s.url || s.title || 'unknown');
+      });
+    }
+
     // Preserve model-provided confidence for transparency, but compute and override with deterministic value
     const modelConfidence = result.confidence;
     const computed = computeConfidenceAndExplanation(result, groundingMetadata);
@@ -299,7 +323,8 @@ module.exports = async (req, res) => {
     result.confidence = computed.score;
     result.confidence_explanation = result.confidence_explanation || computed.explanation;
 
-    const out = { result, groundingMetadata, quotaRemaining };
+    const out = { result, groundingMetadata, quotaRemaining, verificationSummary };
+
 
     // If the model returned a 'no content' style response but we did provide OCR or image, re-run the model once with an explicit instruction to use the provided OCR/text
     const lowerAi = (aiText || '').toLowerCase();
