@@ -9,7 +9,8 @@
  * NOTE: This is a template. Install @upstash/ratelimit and @upstash/redis and configure env vars when deploying.
  */
 
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const fetchModule = require('node-fetch');
+const fetch = fetchModule.default || fetchModule;
 const crypto = require('crypto');
 
 // Source Verification Helper (inline - no external lib needed)
@@ -59,6 +60,20 @@ function extractPublishDate(html) {
 async function verifySource(url, expectedExcerpt = '') {
   const out = { url, ok: false, status: null, finalUrl: null, excerptFound: false, foundDate: null, archivedUrl: null, reason: null, title: null };
   if (!url) { out.reason = 'no-url'; return out; }
+  
+  // SSRF prevention: block private/reserved IPs
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+    const blockedPatterns = /^(localhost|127\.0\.0|192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01])|255\.255|0\.0|::1|fc00|fe80)/i;
+    if (blockedPatterns.test(hostname)) {
+      out.reason = 'blocked-private-ip';
+      return out;
+    }
+  } catch (e) {
+    out.reason = 'invalid-url';
+    return out;
+  }
 
   try {
     let r;
@@ -253,17 +268,32 @@ module.exports = async (req, res) => {
         if (m) {
           const b64 = m[2];
           const visionReq = { requests: [{ image: { content: b64 }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }, { type: 'TEXT_DETECTION' }] }] };
-          const vResp = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(visionReq) });
-          const vData = await vResp.json();
-          serverVisionMetadata = vData;
-          serverVisionText = vData.responses?.[0]?.fullTextAnnotation?.text || vData.responses?.[0]?.textAnnotations?.[0]?.description || '';
-          if (serverVisionText) {
-            // prefer server OCR over client-provided OCR
-            ocrText = serverVisionText;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
+          const vResp = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(visionReq),
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (!vResp.ok) {
+            console.warn('Vision API error:', vResp.status);
+          } else {
+            const vData = await vResp.json();
+            serverVisionMetadata = vData;
+            if (vData.error) {
+              console.warn('Vision API returned error:', vData.error);
+            } else {
+              serverVisionText = vData.responses?.[0]?.fullTextAnnotation?.text || vData.responses?.[0]?.textAnnotations?.[0]?.description || '';
+              if (serverVisionText) {
+                ocrText = serverVisionText;
+              }
+            }
           }
         }
       } catch (e) {
-        console.warn('Server vision OCR failed', e);
+        console.warn('Server vision OCR failed', e.message);
       }
     }
 

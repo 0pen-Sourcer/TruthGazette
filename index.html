@@ -442,6 +442,22 @@
             transform: translateX(5px);
         }
 
+        .source-left {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .source-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .source-desc {
+            font-size: 0.9em;
+            color: #555;
+        }
+
         .source-link i {
             color: #c41e3a;
             font-size: 1.2em;
@@ -582,7 +598,6 @@
         const MODEL = "gemini-2.5-flash"; // Model identifier (server-side will use this)
         // Serverless endpoint: POST /api/investigate — returns { result, groundingMetadata }
 
-
         let uploadedImage = null;
         let uploadedImageText = ''; // OCR result (if any)
         // Ensure anonymous session id exists (stored in localStorage)
@@ -678,7 +693,17 @@
                 return;
             }
 
-            // If OCR is still running, ask user to wait briefly to allow client OCR to finish (best-effort)
+            // Validate URL if provided
+            if (urlInput) {
+              try {
+                new URL(urlInput);
+              } catch (e) {
+                alert('Invalid URL format. Please check and try again.');
+                return;
+              }
+            }
+
+            // If OCR is still running, prevent submission
             if (typeof window._ocrInProgress !== 'undefined' && window._ocrInProgress) {
                 alert('Image OCR is still running. Please wait a moment for the OCR to complete and try again.');
                 analyzeBtn.disabled = false;
@@ -896,8 +921,7 @@
                         <div class="confidence-meter">
                             <h3>Confidence Level</h3>
                             <div class="meter-value">${result.confidence}%</div>
-                            <div style="margin-top: 10px; font-size: 0.9em; color: #666;">Based on AI analysis and fact-checking</div>
-                            <div style="margin-top: 6px; font-size: 0.9em; color: #666;">Confidence is derived from source credibility, consensus strength, and data consistency.</div>
+                            <div style="margin-top: 10px; font-size: 0.9em; color: #666;">${result.confidence_explanation || 'Based on AI analysis and fact-checking'}</div>
                         </div>
 
                         <div class="analysis-section">
