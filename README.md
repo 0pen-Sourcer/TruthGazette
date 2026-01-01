@@ -2,7 +2,7 @@
 
 **A fake news detector that actually works.** Submit a headline, URL, or screenshot. Get a verdict (REAL/FAKE/UNCERTAIN) with confidence scores and sources that aren't just hallucinated by an AI.
 
-**Live demo:** https://truthgazette.vercel.app — give it a whirl (may take a sec to wake on free hosting).
+**Live demo:** https://truthgazette.vercel.app — give it a whirl!
 
 **Easter egg:** Press Shift+L on the site to toggle "lights-out" flashlight mode. It's dumb, but cool.
 
