@@ -1,53 +1,68 @@
 # THE TRUTH GAZETTE — Fake News Detector
 
-**Tagline:** A student-built, AI-powered investigative mini-newspaper for spotting false claims 
----
+> A student-built, AI-powered investigative mini-newspaper for spotting false claims.
 
-## 🔎 Overview
-The Truth Gazette helps students, teachers, and community members quickly assess short claims, headlines, URLs, and images. It uses server-side prompt engineering with a generative model (Gemini) and server-side trusted source grounding to produce:
-- A verdict: REAL / FAKE / UNCERTAIN
-- Confidence % (human-readable explanation)
-- A short investigation report divided into readable paragraphs
-- Key findings and a list of authoritative clickable sources (government, research orgs, academic journals). Community-driven sites (e.g., Reddit, Quora) are used only for internal cross-checks and are never exposed in the public sources list.
+## 🎯 What It Does
 
----
+Submit a headline, URL, or image. Get back a **newspaper-style verdict** with confidence reasoning, key findings, and authoritative sources.
 
-## ✨ Features
-- Inputs: **Text**, **URL** (grounding/search), and **Image** (OCR → analyze)
-- Server-side prompt handling and provider calls
-- Optional rate-limiting & daily quotas using Upstash (`@upstash/ratelimit`, `@upstash/redis`); in-memory fallback for local testing
-- Optional caching to reduce provider usage
-- Simple static frontend (`index.html`) and a test harness (`test/run_tests.js`) for basic checks
+- **Input**: Text claim • URL • Image (auto-OCR)
+- **Output**: REAL / FAKE / UNCERTAIN verdict + investigation report
+- **Grounding**: Server-side source verification, URL validation, date checking
+- **Privacy**: No API keys in frontend; all AI calls routed through secure server endpoint
 
----
+## 🚀 Quick Start
 
-## 🛠️ Development (local)
-1. Install dependencies:
-   ```bash
-   cd TruthGazette
-   npm ci
-   ```
-2. Start the dev server (Vercel CLI recommended):
-   - `vercel dev --listen 3000` (requires Vercel CLI)
-   - or run your preferred serverless dev environment
-3. Run tests (against your running dev server):
-   ```bash
-   TEST_BASE_URL=http://localhost:3000 npm test
-   ```
+```bash
+npm install
+npm start
+# Open http://localhost:3000
+```
 
-Notes:
-- The frontend no longer contains API keys. All AI calls must go through `/api/investigate` which reads keys from environment variables on the server.
-- The client sends an `X-Session-Id` header (stored in `localStorage`) to enable session-based rate limiting. Optionally set `REQUIRE_SESSION_ID=1` in staging/production to require session IDs for all requests.
+## 📁 Project Structure
 
-Environment variables used:
-- `GEN_API_KEY`, `GEN_MODEL` (required for model access)
-- `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (optional, enable server-side rate limiting)
-- `REQUIRE_SESSION_ID` (optional, set to `1` to enforce session header)
-- `DAILY_QUOTA` (optional, default `200`)
-- `RATE_LIMIT_PER_MIN` (optional, default `20`)
-- `ALLOW_TEST_HEADERS` (optional, set to `1` to allow `X-TEST-RL-LIMIT` header for local tests)
-- `RUN_RATE_LIMIT_TEST` (used by test harness to run the rate-limit test)
-- You can run the test harness in `test/run_tests.js` to validate behavior for the test cases in `TEST_CASES.md`.
+```
+.
+├── index.html          # Complete single-page app (UI + client logic)
+├── api/investigate.js  # Server-side investigation endpoint + source verifier
+├── package.json        # Dependencies
+└── favicon.svg         # Branding
+```
+
+## 🔧 Environment Variables
+
+Set in Vercel / `.env.local`:
+
+```
+GEN_API_KEY=<your-gemini-api-key>
+GEN_MODEL=gemini-2.5-flash
+UPSTASH_REDIS_REST_URL=<optional>
+UPSTASH_REDIS_REST_TOKEN=<optional>
+RATE_LIMIT_PER_MIN=20
+DAILY_QUOTA=200
+```
+
+## 🌟 Key Features
+
+- **Server-Side Verification**: Each source URL is fetched and validated; excerpts & dates confirmed
+- **Fallback Archive Links**: If a source is 404, attempts web.archive.org snapshot
+- **OCR Pipeline**: Image → Google Vision API (primary) + Tesseract.js fallback
+- **Prompt Hardening**: Model explicitly instructed NOT to fabricate URLs or dates
+- **Rate Limiting & Quotas**: Per-minute and daily limits (Upstash or in-memory)
+- **Newspaper UI**: Dramatic headlines, investigation tone, clickable source links
+- **Analytics Ready**: Vercel Web Analytics integration
+
+## 🔐 Security Notes
+
+- All API keys stored server-side only
+- Input sanitization to prevent XSS/prompt injection
+- Source URLs validated to prevent SSRF
+- Rate limiting prevents abuse
+- Session IDs for optional user tracking
+
+## 📝 License
+
+MIT — built by Ishant as a capstone project.
 - The test runner also checks for accidental hardcoded keys in front-end files within this directory to prevent leaks.
 
 ---

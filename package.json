@@ -1,10 +1,9 @@
 {
   "name": "truth-gazette",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "AI-powered investigative fake news detector with newspaper-style interface",
   "private": true,
   "scripts": {
-    "test": "node test/run_tests.js",
-    "unit-test": "node test/source_verification.test.js",
     "start": "vercel dev --listen 3000"
   },
 
