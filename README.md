@@ -2,6 +2,10 @@
 
 **A fake news detector that actually works.** Submit a headline, URL, or screenshot. Get a verdict (REAL/FAKE/UNCERTAIN) with confidence scores and sources that aren't just hallucinated by an AI.
 
+**Live demo:** https://truthgazette.vercel.app — give it a whirl (may take a sec to wake on free hosting).
+
+**Easter egg:** Press Shift+L on the site to toggle "lights-out" flashlight mode. It's dumb, but cool.
+
 ## What It Does
 
 - **Text**: Paste a claim → AI analyzes it + Google search
@@ -19,6 +23,11 @@ npm start
 ```
 
 Open `http://localhost:3000`. It's a newspaper-style interface (because we're committing to the bit).
+
+Quick demo tips:
+- Paste a headline or drop a URL, hit "INVESTIGATE NOW".
+- Upload a screenshot for OCR; cropping tight around text helps accuracy.
+- Try the live site first: https://truthgazette.vercel.app
 
 ## The Tech Stack
 
