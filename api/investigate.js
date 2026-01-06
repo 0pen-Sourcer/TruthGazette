@@ -3,10 +3,10 @@
  * Serverless function for fact-checking claims using Gemini AI with Google Search grounding.
  * 
  * Key features:
- * - ALWAYS enables Google Search grounding (not just for URLs)
+ * - ALWAYS enables Google Search grounding
  * - Strict prompt to prevent URL hallucination
  * - Server-side source verification with fallback to Web Archive
- * - Rate limiting (Upstash Redis or in-memory fallback)
+ * - Rate limiting (Upstash Redis or in-memory fallback) (Kinda optional)
  * - Response caching
  */
 
@@ -378,6 +378,7 @@ Respond with ONLY valid JSON:
 {
   "verdict": "FAKE" | "REAL" | "UNCERTAIN",
   "confidence": <60-95>,
+  "confidenceReason": "<1 sentence explaining WHY you gave this confidence level - what evidence supports or undermines the claim?>",
   "headline": "<newspaper-style headline>",
   "analysis": "<2-3 paragraphs with your reasoning. Be specific about what you verified vs. what you couldn't verify.>",
   "keyFactors": ["<factor 1>", "<factor 2>", "<factor 3>"],
@@ -538,6 +539,7 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     const finalResult = {
       verdict: result.verdict,
       confidence,
+      confidenceReason: result.confidenceReason || '',
       headline: result.headline,
       analysis: result.analysis,
       keyFactors: result.keyFactors || [],

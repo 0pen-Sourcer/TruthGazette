@@ -825,12 +825,9 @@
                         counter++;
                         let domain = '';
                         try { domain = new URL(source.url).hostname.replace('www.', ''); } catch (e) {}
-                        const verifiedBadge = source.verified ? 
-                            '<span style="background:#2d5016;color:#fff;padding:2px 6px;border-radius:3px;font-size:0.75em;margin-left:8px;">✓ Verified</span>' : 
-                            '';
                         return `<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">
                             <div class="source-left">
-                                <span class="source-title"><strong>[${counter}]</strong> ${source.title || domain}${verifiedBadge}</span>
+                                <span class="source-title"><strong>[${counter}]</strong> ${source.title || domain}</span>
                                 ${domain ? `<span class="source-desc" style="margin-top:4px; font-size:0.85em; color:#888;">${domain}</span>` : ''}
                             </div>
                             <i class="fas fa-external-link-alt"></i>
@@ -841,7 +838,7 @@
                 if (sourceItems) {
                     sourcesHTML = `
                         <div class="sources-section">
-                            <h4><i class="fas fa-book"></i> Sources (${counter} verified):</h4>
+                            <h4><i class="fas fa-book"></i> Sources:</h4>
                             ${sourceItems}
                         </div>
                     `;
@@ -858,29 +855,8 @@
             const analysisText = result.analysis || '';
             const analysisHTML = analysisText.split(/\n\s*\n/).map(p => `<p>${p.trim()}</p>`).join('');
 
-            // Build confidence explanation
-            const meta = result._meta || {};
-            let confidenceNote = '';
-            
-            // Show search grounding status
-            if (meta.searchUsed || meta.hadGrounding) {
-                if (meta.verifiedSourceCount > 0) {
-                    confidenceNote = `<i class="fas fa-check-circle" style="color:#27ae60;"></i> Verified with ${meta.verifiedSourceCount} source(s) via Google Search`;
-                } else {
-                    confidenceNote = '<i class="fas fa-search"></i> Searched via Google (no matching sources found)';
-                }
-            } else if (meta.verifiedSourceCount > 0) {
-                confidenceNote = `Based on ${meta.verifiedSourceCount} verified source(s)`;
-            } else if (meta.unverifiedSourceCount > 0) {
-                confidenceNote = '<i class="fas fa-exclamation-triangle" style="color:#f4a500;"></i> Caution: sources could not be verified';
-            } else {
-                confidenceNote = '<i class="fas fa-robot"></i> Based on AI analysis (no external sources found)';
-            }
-            
-            // Add analysis date if available
-            if (meta.analysisDate) {
-                confidenceNote += ` • Analyzed ${meta.analysisDate}`;
-            }
+            // Use confidence reason from AI (explaining WHY this confidence level)
+            const confidenceReason = result.confidenceReason || '';
 
             resultArea.innerHTML = `
                 <div class="result-article">
@@ -893,7 +869,7 @@
                         <div class="confidence-meter">
                             <h3>Confidence Level</h3>
                             <div class="meter-value">${result.confidence}%</div>
-                            <div style="margin-top: 10px; font-size: 0.9em; color: #666;">${confidenceNote}</div>
+                            ${confidenceReason ? `<div style="margin-top: 10px; font-size: 0.9em; color: #555; font-style: italic;">${confidenceReason}</div>` : ''}
                         </div>
 
                         <div class="analysis-section">
