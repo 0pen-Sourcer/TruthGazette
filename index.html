@@ -806,109 +806,81 @@
                 ? result.keyFactors.map(factor => `<li><i class="fas fa-caret-right"></i>${factor}</li>`).join('')
                 : '';
 
+            // Build sources HTML - prefer result.sources (already verified by backend)
             let sourcesHTML = '';
-            if (groundingMetadata && groundingMetadata.groundingChunks) {
-                // Filter out community-driven / opinion platforms from public output (internal only):
-                const blockedDomains = ['reddit.com','quora.com','medium.com'];
-                const publicSources = [];
-                let internalCrossRefUsed = false;
-                let publicCounter = 0;
-                groundingMetadata.groundingChunks.forEach((chunk) => {
-                    try {
-                        const uri = chunk.web?.uri || '';
-                        const title = chunk.web?.title || chunk.web?.displayName || uri;
-                        const snippet = chunk.web?.snippet || chunk.web?.description || chunk.excerpt || '';
-                        const domain = (() => { try { return new URL(uri).hostname.replace('www.',''); } catch(e){ return ''; } })();
-                        if (domain && blockedDomains.some(b => domain.endsWith(b))) {
-                            internalCrossRefUsed = true; // do not show these to users
-                            return;
-                        }
-                        publicCounter += 1;
-                        publicSources.push(`<a href="${uri}" target="_blank" class="source-link">
+            const sources = result.sources || [];
+            
+            if (sources.length > 0) {
+                const blockedDomains = ['reddit.com', 'quora.com', 'medium.com'];
+                let counter = 0;
+                const sourceItems = sources
+                    .filter(s => s && s.url)
+                    .filter(s => {
+                        try {
+                            const domain = new URL(s.url).hostname.replace('www.', '');
+                            return !blockedDomains.some(b => domain.includes(b));
+                        } catch (e) { return true; }
+                    })
+                    .map(source => {
+                        counter++;
+                        let domain = '';
+                        try { domain = new URL(source.url).hostname.replace('www.', ''); } catch (e) {}
+                        const verifiedBadge = source.verified ? 
+                            '<span style="background:#2d5016;color:#fff;padding:2px 6px;border-radius:3px;font-size:0.75em;margin-left:8px;">✓ Verified</span>' : 
+                            '';
+                        return `<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">
                             <div class="source-left">
-                                <span class="source-title"><strong>[${publicCounter}]</strong> ${title}</span>
-                                ${snippet ? `<span class="source-desc">${snippet}</span>` : ''}
-                                ${domain ? `<span class="source-desc" style="margin-top:6px; font-size:0.85em; color:#888;">${domain}</span>` : ''}
+                                <span class="source-title"><strong>[${counter}]</strong> ${source.title || domain}${verifiedBadge}</span>
+                                ${domain ? `<span class="source-desc" style="margin-top:4px; font-size:0.85em; color:#888;">${domain}</span>` : ''}
                             </div>
                             <i class="fas fa-external-link-alt"></i>
-                        </a>`);
-                    } catch (e) {
-                        // ignore chunk errors
-                    }
-                });
-                const sources = publicSources.join('');
+                        </a>`;
+                    })
+                    .join('');
+
+                if (sourceItems) {
+                    sourcesHTML = `
+                        <div class="sources-section">
+                            <h4><i class="fas fa-book"></i> Sources (${counter} verified):</h4>
+                            ${sourceItems}
+                        </div>
+                    `;
+                }
+            } else {
                 sourcesHTML = `
-                    <div class="sources-section">
-                        <h4><i class="fas fa-book"></i> Primary & Secondary Sources Reviewed:</h4>
-                        ${sources}
-                        ${internalCrossRefUsed ? `<div style="margin-top:10px;font-size:0.9em;color:#666;font-style:italic;">Internally cross-referenced, not cited publicly.</div>` : ''}
-                    </div>
-                `;
-            } else if (result.sources && result.sources.length > 0) {
-                // Filter model-provided sources similarly: hide community platforms publicly
-                const blockedDomains = ['reddit.com','quora.com','medium.com'];
-                const publicSources = [];
-                let internalCrossRefUsed = false;
-                let counter = 0;
-
-                result.sources.forEach((source) => {
-                    try {
-                        if (typeof source === 'object' && source.url && source.url.startsWith('http')) {
-                            const domain = (() => { try { return new URL(source.url).hostname.replace('www.',''); } catch(e){ return ''; } })();
-                            if (domain && blockedDomains.some(b => domain.endsWith(b))) {
-                                internalCrossRefUsed = true;
-                                return;
-                            }
-                            counter += 1;
-                            const title = source.title || source.name || source.description || source.url;
-                            const desc = source.description || source.snippet || '';
-                            publicSources.push(`<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">
-                                <div class="source-left">
-                                    <span class="source-title"><strong>[${counter}]</strong> ${title}</span>
-                                    ${desc ? `<span class="source-desc">${desc}</span>` : ''}
-                                    ${domain ? `<span class="source-desc" style="margin-top:6px; font-size:0.85em; color:#888;">${domain}</span>` : ''}
-                                </div>
-                                <i class="fas fa-external-link-alt"></i>
-                            </a>`);
-                            return;
-                        }
-
-                        if (typeof source === 'string' && source.startsWith('http')) {
-                            const domain = (() => { try { return new URL(source).hostname.replace('www.',''); } catch(e){ return source; } })();
-                            if (domain && blockedDomains.some(b => domain.endsWith(b))) {
-                                internalCrossRefUsed = true;
-                                return;
-                            }
-                            counter += 1;
-                            publicSources.push(`<a href="${source}" target="_blank" rel="noopener noreferrer" class="source-link">
-                                <div class="source-left">
-                                    <span class="source-title"><strong>[${counter}]</strong> ${domain}</span>
-                                </div>
-                                <i class="fas fa-external-link-alt"></i>
-                            </a>`);
-                            return;
-                        }
-
-                        // fallback: text-only
-                        counter += 1;
-                        publicSources.push(`<div style="padding: 12px; margin: 10px 0; border: 2px solid #ddd; background: #fffef8;"><i class="fas fa-caret-right"></i> <strong>[${counter}]</strong> ${typeof source === 'object' ? (source.title || source) : source}</div>`);
-                    } catch (e) {
-                        // ignore and continue
-                    }
-                });
-
-                const sources = publicSources.join('');
-                sourcesHTML = `
-                    <div class="sources-section">
-                        <h4><i class="fas fa-book"></i> Primary & Secondary Sources Reviewed:</h4>
-                        ${sources}
-                        ${internalCrossRefUsed ? `<div style="margin-top:10px;font-size:0.9em;color:#666;font-style:italic;">Internally cross-referenced, not cited publicly.</div>` : ''}
+                    <div class="sources-section" style="border-color:#f4a500;">
+                        <h4><i class="fas fa-exclamation-triangle" style="color:#f4a500;"></i> No Verified Sources Found</h4>
+                        <p style="font-size:0.9em;color:#666;">The AI could not find verifiable sources for this claim. This doesn't mean the claim is false, but it couldn't be independently verified.</p>
                     </div>
                 `;
             }
 
             const analysisText = result.analysis || '';
             const analysisHTML = analysisText.split(/\n\s*\n/).map(p => `<p>${p.trim()}</p>`).join('');
+
+            // Build confidence explanation
+            const meta = result._meta || {};
+            let confidenceNote = '';
+            
+            // Show search grounding status
+            if (meta.searchUsed || meta.hadGrounding) {
+                if (meta.verifiedSourceCount > 0) {
+                    confidenceNote = `<i class="fas fa-check-circle" style="color:#27ae60;"></i> Verified with ${meta.verifiedSourceCount} source(s) via Google Search`;
+                } else {
+                    confidenceNote = '<i class="fas fa-search"></i> Searched via Google (no matching sources found)';
+                }
+            } else if (meta.verifiedSourceCount > 0) {
+                confidenceNote = `Based on ${meta.verifiedSourceCount} verified source(s)`;
+            } else if (meta.unverifiedSourceCount > 0) {
+                confidenceNote = '<i class="fas fa-exclamation-triangle" style="color:#f4a500;"></i> Caution: sources could not be verified';
+            } else {
+                confidenceNote = '<i class="fas fa-robot"></i> Based on AI analysis (no external sources found)';
+            }
+            
+            // Add analysis date if available
+            if (meta.analysisDate) {
+                confidenceNote += ` • Analyzed ${meta.analysisDate}`;
+            }
 
             resultArea.innerHTML = `
                 <div class="result-article">
@@ -921,7 +893,7 @@
                         <div class="confidence-meter">
                             <h3>Confidence Level</h3>
                             <div class="meter-value">${result.confidence}%</div>
-                            <div style="margin-top: 10px; font-size: 0.9em; color: #666;">${result.confidence_explanation || 'Based on AI analysis and fact-checking'}</div>
+                            <div style="margin-top: 10px; font-size: 0.9em; color: #666;">${confidenceNote}</div>
                         </div>
 
                         <div class="analysis-section">
@@ -988,6 +960,16 @@
             });
 
             overlay.addEventListener('click', (e) => e.preventDefault());
+        })();
+
+        // Set dynamic date
+        (function() {
+            const months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 
+                           'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+            const now = new Date();
+            const dateStr = `${months[now.getMonth()]} ${now.getFullYear()} EDITION`;
+            const el = document.getElementById('dateLine');
+            if (el) el.textContent = dateStr;
         })();
     </script>
 </body>

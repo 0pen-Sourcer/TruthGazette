@@ -1,19 +1,46 @@
 /**
- * Serverless Investigate API (Vercel / Netlify function friendly)
- * - Reads GEN_API_KEY from environment variables (GEN_API_KEY)
- * - Applies input validation
- * - (Optional) Rate-limits via Upstash Redis + @upstash/ratelimit
- * - (Optional) Caches results by input hash (Upstash Redis)
- * - Forwards a structured prompt to the Generative API and returns parsed { result, groundingMetadata }
- *
- * NOTE: This is a template. Install @upstash/ratelimit and @upstash/redis and configure env vars when deploying.
+ * Truth Gazette - Investigate API
+ * Serverless function for fact-checking claims using Gemini AI with Google Search grounding.
+ * 
+ * Key features:
+ * - ALWAYS enables Google Search grounding (not just for URLs)
+ * - Strict prompt to prevent URL hallucination
+ * - Server-side source verification with fallback to Web Archive
+ * - Rate limiting (Upstash Redis or in-memory fallback)
+ * - Response caching
  */
 
 const fetchModule = require('node-fetch');
 const fetch = fetchModule.default || fetchModule;
 const crypto = require('crypto');
 
-// Source Verification Helper (inline - no external lib needed)
+// ============================================================================
+// SOURCE VERIFICATION HELPERS
+// ============================================================================
+
+// Detect hallucinated URLs by checking common patterns of made-up URLs
+function detectHallucinatedURL(url) {
+  if (!url || typeof url !== 'string') return true;
+  
+  // Pattern: URLs with too many dash-separated words (likely fabricated)
+  const pathPart = url.split('?')[0];
+  const segments = pathPart.split(/[-_/]/).filter(s => s.length > 2);
+  if (segments.length > 15) return true; // Too many segments = likely fake
+  
+  // Pattern: URL looks like a sentence converted to dashes
+  const suspiciousPattern = /\/article\/[a-z]+-[a-z]+-[a-z]+-[a-z]+-[a-z]+-[a-z]+-[a-z]+-[a-z]+-[a-z]+-\d+\/?$/i;
+  if (suspiciousPattern.test(url)) return true;
+  
+  // Pattern: Random-looking article IDs that are too long
+  const longIdPattern = /\d{10,}/;
+  const idMatches = url.match(/\d+/g) || [];
+  if (idMatches.some(id => id.length > 12 && !url.includes('youtube') && !url.includes('twitter'))) {
+    return true;
+  }
+  
+  return false;
+}
+
 async function fetchWithTimeout(url, opts = {}, timeout = 8000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
@@ -27,474 +54,523 @@ async function fetchWithTimeout(url, opts = {}, timeout = 8000) {
   }
 }
 
-async function tryArchive(url) {
+async function tryWebArchive(url) {
   try {
-    const archiveProbe = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(url)}&output=json&limit=1`;
-    const r = await fetchWithTimeout(archiveProbe, { method: 'GET' }, 5000);
+    const cdxUrl = `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(url)}&output=json&limit=1`;
+    const r = await fetchWithTimeout(cdxUrl, { method: 'GET' }, 5000);
     if (!r.ok) return null;
-    const j = await r.json();
-    if (Array.isArray(j) && j.length > 1 && j[1] && j[1][1]) {
-      const timestamp = j[1][1];
-      const archivedUrl = `https://web.archive.org/web/${timestamp}/${url}`;
-      return archivedUrl;
+    const data = await r.json();
+    if (Array.isArray(data) && data.length > 1 && data[1]?.[1]) {
+      return `https://web.archive.org/web/${data[1][1]}/${url}`;
     }
-  } catch (e) {
-    // ignore
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
+function isPrivateIP(hostname) {
+  const blocked = /^(localhost|127\.|192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|0\.0\.|::1|fc00|fe80)/i;
+  return blocked.test(hostname);
+}
+
+async function verifySourceURL(url) {
+  const result = {
+    url,
+    verified: false,
+    status: null,
+    finalUrl: null,
+    title: null,
+    archivedUrl: null,
+    error: null
+  };
+
+  if (!url || url === 'SOURCE_UNAVAILABLE' || !url.startsWith('http')) {
+    result.error = 'invalid-url';
+    return result;
   }
-  return null;
-}
 
-function extractTitle(html) {
-  const m = html.match(/<title>([^<]+)<\/title>/i);
-  return m ? m[1].trim() : null;
-}
-
-function extractPublishDate(html) {
-  const metaDate = html.match(/<meta[^>]+(property|name)=["']?(article:published_time|pubdate|publication_date|date|article:published)["']?[^>]*content=["']([^"']+)["'][^>]*>/i);
-  if (metaDate && metaDate[3]) return metaDate[3];
-  const datePattern = html.match(/(\b\d{4}[-\/]\d{1,2}[-\/]\d{1,2}\b)|(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s*\d{4}\b)/i);
-  if (datePattern) return datePattern[0];
-  return null;
-}
-
-async function verifySource(url, expectedExcerpt = '') {
-  const out = { url, ok: false, status: null, finalUrl: null, excerptFound: false, foundDate: null, archivedUrl: null, reason: null, title: null };
-  if (!url) { out.reason = 'no-url'; return out; }
-  
-  // SSRF prevention: block private/reserved IPs
   try {
     const urlObj = new URL(url);
-    const hostname = urlObj.hostname;
-    const blockedPatterns = /^(localhost|127\.0\.0|192\.168|10\.|172\.(1[6-9]|2[0-9]|3[01])|255\.255|0\.0|::1|fc00|fe80)/i;
-    if (blockedPatterns.test(hostname)) {
-      out.reason = 'blocked-private-ip';
-      return out;
+    if (isPrivateIP(urlObj.hostname)) {
+      result.error = 'private-ip-blocked';
+      return result;
     }
   } catch (e) {
-    out.reason = 'invalid-url';
-    return out;
+    result.error = 'malformed-url';
+    return result;
   }
 
   try {
-    let r;
+    // Try HEAD first (faster)
+    let response;
     try {
-      r = await fetchWithTimeout(url, { method: 'HEAD' }, 5000);
-    } catch (e) {
-      // HEAD may be blocked; try GET
+      response = await fetchWithTimeout(url, { method: 'HEAD' }, 5000);
+    } catch (e) { /* HEAD blocked, try GET */ }
+
+    // Fall back to GET
+    if (!response || !response.ok) {
+      response = await fetchWithTimeout(url, { method: 'GET' }, 8000);
     }
 
-    if (!r || !r.ok) {
-      try {
-        r = await fetchWithTimeout(url, { method: 'GET' }, 8000);
-      } catch (e) {
-        out.reason = 'http-error';
-        const archived = await tryArchive(url);
-        if (archived) {
-          out.archivedUrl = archived;
-          out.reason = 'archived';
-          out.ok = true;
-          out.finalUrl = archived;
-          return out;
-        }
-        return out;
+    result.status = response.status;
+    result.finalUrl = response.url;
+
+    if (response.ok) {
+      result.verified = true;
+      // Try to extract title from HTML
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        const html = await response.text();
+        const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+        if (titleMatch) result.title = titleMatch[1].trim();
+      }
+    } else {
+      // Try Web Archive
+      const archived = await tryWebArchive(url);
+      if (archived) {
+        result.archivedUrl = archived;
+        result.verified = true;
+        result.error = 'original-404-archived-found';
+      } else {
+        result.error = `http-${response.status}`;
       }
     }
-
-    out.status = r.status;
-    out.finalUrl = r.url;
-
-    const contentType = r.headers.get('content-type') || '';
-    if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
-      out.reason = 'non-html';
-      out.ok = false;
-      return out;
-    }
-
-    const body = await r.text();
-    out.title = extractTitle(body);
-    out.foundDate = extractPublishDate(body);
-
-    if (expectedExcerpt) {
-      out.excerptFound = body.toLowerCase().includes(expectedExcerpt.toLowerCase().slice(0, 120));
-    }
-
-    out.ok = true;
-    return out;
   } catch (e) {
-    out.reason = 'exception';
-    return out;
+    result.error = 'fetch-failed';
+    // Try Web Archive as last resort
+    const archived = await tryWebArchive(url);
+    if (archived) {
+      result.archivedUrl = archived;
+      result.verified = true;
+      result.error = 'original-unreachable-archived-found';
+    }
   }
+
+  return result;
 }
 
-// Optionally use Upstash rate-limit & Redis if configured
+// ============================================================================
+// RATE LIMITING
+// ============================================================================
+
 let useUpstash = false;
-let rateLimit;
-let redisClient;
-// In-memory fallback for local development rate-limiter
-const LOCAL_RATE_STATE = new Map(); // key -> { timestamps: [epoch_ms], dailyCount: {dayStr: count} }
+let rateLimit, redisClient;
+const LOCAL_STATE = new Map();
 
 try {
   const { Ratelimit } = require('@upstash/ratelimit');
   const { Redis } = require('@upstash/redis');
   if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-    redisClient = new Redis({ url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN });
-    // default: 20 requests per minute per IP
-    rateLimit = new Ratelimit({ redis: redisClient, limiter: Ratelimit.fixedWindow(parseInt(process.env.RATE_LIMIT_PER_MIN || '20', 10), '1 m') });
+    redisClient = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN
+    });
+    rateLimit = new Ratelimit({
+      redis: redisClient,
+      limiter: Ratelimit.fixedWindow(parseInt(process.env.RATE_LIMIT_PER_MIN || '20', 10), '1 m')
+    });
     useUpstash = true;
   }
-} catch (e) {
-  // upstash libs not installed — deploy-time install and config recommended
-}
+} catch (e) { /* Upstash not configured */ }
 
-// Helper for local in-memory rate limiting (fallback for dev)
-function checkLocalRateLimit(key, perMinLimit) {
+function checkLocalRateLimit(key, limit) {
   const now = Date.now();
-  const state = LOCAL_RATE_STATE.get(key) || { timestamps: [], dailyCount: {} };
-  // purge timestamps older than 60s
-  state.timestamps = state.timestamps.filter(ts => now - ts < 60 * 1000);
-  if (state.timestamps.length >= perMinLimit) {
-    LOCAL_RATE_STATE.set(key, state);
-    return { success: false, remaining: 0, reset: 60 - Math.floor((now - state.timestamps[0]) / 1000) };
+  const state = LOCAL_STATE.get(key) || { timestamps: [] };
+  state.timestamps = state.timestamps.filter(t => now - t < 60000);
+  if (state.timestamps.length >= limit) {
+    return { success: false, reset: Math.ceil((60000 - (now - state.timestamps[0])) / 1000) };
   }
   state.timestamps.push(now);
-  // daily count
-  const dayKey = new Date().toISOString().slice(0,10);
-  state.dailyCount[dayKey] = (state.dailyCount[dayKey] || 0) + 1;
-  LOCAL_RATE_STATE.set(key, state);
-  return { success: true, remaining: perMinLimit - state.timestamps.length, reset: 60 };
+  LOCAL_STATE.set(key, state);
+  return { success: true };
 }
 
+async function checkDailyQuota(sessionId, limit) {
+  const dayKey = new Date().toISOString().slice(0, 10);
+  
+  if (useUpstash && redisClient) {
+    const key = `quota:${sessionId}:${dayKey}`;
+    const count = await redisClient.incr(key);
+    if (count === 1) await redisClient.expire(key, 90000); // 25 hours
+    return { allowed: count <= limit, remaining: Math.max(0, limit - count) };
+  }
+  
+  // Local fallback
+  const key = `daily:${sessionId}`;
+  const state = LOCAL_STATE.get(key) || { day: dayKey, count: 0 };
+  if (state.day !== dayKey) { state.day = dayKey; state.count = 0; }
+  state.count++;
+  LOCAL_STATE.set(key, state);
+  return { allowed: state.count <= limit, remaining: Math.max(0, limit - state.count) };
+}
+
+// ============================================================================
+// MAIN HANDLER
+// ============================================================================
+
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   try {
-    const ip = (req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown').split(',')[0].trim();
-    const sessionId = req.body?.sessionId || req.headers['x-session-id'] || (req.cookies && req.cookies.tg_session) || 'anon';
+    // Extract client info
+    const ip = (req.headers['x-forwarded-for'] || req.connection?.remoteAddress || 'unknown').split(',')[0].trim();
+    const sessionId = req.body?.sessionId || req.headers['x-session-id'] || 'anon';
+    const { text = '', url = '', image = null, ocrText = '' } = req.body || {};
 
-    // Enforce anonymous session id if required (soft auth)
-    if (process.env.REQUIRE_SESSION_ID === '1' && (sessionId === 'anon')) {
-      return res.status(401).json({ error: 'Missing session id. Include X-Session-Id header or sessionId in the request body.' });
+    // ========================================================================
+    // INPUT VALIDATION
+    // ========================================================================
+    
+    if (!text && !url && !image) {
+      return res.status(400).json({ error: 'Please provide text, URL, or an image to analyze' });
+    }
+    if (text && text.length > 5000) {
+      return res.status(400).json({ error: 'Text is too long (max 5000 characters)' });
+    }
+    if (url && url.length > 2000) {
+      return res.status(400).json({ error: 'URL is too long' });
+    }
+    if (image && image.length > 15 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Image is too large (max 15MB)' });
     }
 
-    // rate limiting (Per-IP + session)
-    const rateLimitKey = `${ip}:${sessionId}`;
-
-    // Allow test override header for local testing only when ALLOW_TEST_HEADERS=1
-    let perMinuteLimit = parseInt(process.env.RATE_LIMIT_PER_MIN || '20', 10);
-    if (process.env.ALLOW_TEST_HEADERS === '1' && req.headers['x-test-rl-limit']) {
-      const provided = parseInt(req.headers['x-test-rl-limit'], 10);
-      if (!isNaN(provided) && provided > 0 && provided < 1000) {
-        perMinuteLimit = provided;
-      }
-    }
-
+    // ========================================================================
+    // RATE LIMITING & QUOTAS
+    // ========================================================================
+    
+    const rateLimitKey = `rl:${ip}:${sessionId}`;
+    const perMinLimit = parseInt(process.env.RATE_LIMIT_PER_MIN || '20', 10);
+    
     if (useUpstash && rateLimit) {
       const rl = await rateLimit.limit(rateLimitKey);
       if (!rl.success) {
-        return res.status(429).json({ error: 'Rate limit exceeded', reason: 'per-minute limit' });
+        return res.status(429).json({ error: 'Rate limit exceeded. Try again in a minute.' });
       }
     } else {
-      // local in-memory fallback
-      const rlLocal = checkLocalRateLimit(rateLimitKey, perMinuteLimit);
-      if (!rlLocal.success) {
-        return res.status(429).json({ error: 'Rate limit exceeded (local)', reason: 'per-minute limit', retry_after: rlLocal.reset });
+      const rl = checkLocalRateLimit(rateLimitKey, perMinLimit);
+      if (!rl.success) {
+        return res.status(429).json({ error: 'Rate limit exceeded.', retry_after: rl.reset });
       }
     }
 
-    const { text = '', url = '', image = null, ocrText = '' } = req.body || {};
+    const dailyLimit = parseInt(process.env.DAILY_QUOTA || '200', 10);
+    const quota = await checkDailyQuota(sessionId, dailyLimit);
+    if (!quota.allowed) {
+      return res.status(429).json({ error: 'Daily quota exceeded. Come back tomorrow!' });
+    }
 
-    // daily quota enforcement (per session or IP)
-    const DAILY_LIMIT = parseInt(process.env.DAILY_QUOTA || '200', 10);
-    let quotaRemaining = null;
+    // ========================================================================
+    // CACHE CHECK
+    // ========================================================================
+    
+    const inputHash = crypto.createHash('sha256')
+      .update(text + '|' + url + '|' + (image ? image.slice(0, 200) : ''))
+      .digest('hex');
+
     if (useUpstash && redisClient) {
-      const dayKey = `quota:${sessionId}:${new Date().toISOString().slice(0,10)}`;
-      const current = await redisClient.incr(dayKey);
-      if (current === 1) {
-        // set expiry 25 hours to be safe
-        await redisClient.expire(dayKey, 60 * 60 * 25);
-      }
-      if (current > DAILY_LIMIT) {
-        return res.status(429).json({ error: 'Daily quota exceeded' });
-      }
-      quotaRemaining = DAILY_LIMIT - current;
-    } else {
-      // local daily quota accounting (fallback for dev)
-      const dayKey = new Date().toISOString().slice(0,10);
-      const state = LOCAL_RATE_STATE.get(`${sessionId}:daily`) || { counts: {} };
-      state.counts[dayKey] = (state.counts[dayKey] || 0) + 1;
-      LOCAL_RATE_STATE.set(`${sessionId}:daily`, state);
-      const current = state.counts[dayKey];
-      if (current > DAILY_LIMIT) return res.status(429).json({ error: 'Daily quota exceeded (local)' });
-      quotaRemaining = DAILY_LIMIT - current;
-    }
-
-    // payload validation
-    if (!text && !url && !image) {
-      return res.status(400).json({ error: 'No input provided' });
-    }
-    if (text && text.length > 3000) {
-      return res.status(400).json({ error: 'Text too long' });
-    }
-    if (url && url.length > 2000) {
-      return res.status(400).json({ error: 'URL too long' });
-    }
-
-    // simple anti-spam / sanitization: remove extremely repeated characters
-    const sanitizedText = text.replace(/(.)\1{100,}/g, '$1');
-    // strip repeated punctuation and long repeats
-    const cleaned = sanitizedText.replace(/([!?.]){2,}/g,'$1').replace(/(.)\1{20,}/g,'$1');
-
-    // cache key
-    const key = crypto.createHash('sha256').update(sanitizedText + '|' + url + '|' + (image ? image.slice(0,100) : '')).digest('hex');
-    // Try cache
-    if (useUpstash && redisClient) {
-      const cached = await redisClient.get(`investigate:${key}`);
+      const cached = await redisClient.get(`cache:${inputHash}`);
       if (cached) {
-        return res.status(200).json(JSON.parse(cached));
+        return res.status(200).json({ ...JSON.parse(cached), cached: true });
       }
     }
 
-    // Build server-side prompt and request body — keep prompt on server to avoid client tampering
-    const MODEL = process.env.GEN_MODEL || 'gemini-2.5-flash';
-    const API_KEY = process.env.GEN_API_KEY; // MUST be set in Vercel/Env
-    if (!API_KEY) return res.status(500).json({ error: 'Missing server API key' });
+    // ========================================================================
+    // API KEY CHECK
+    // ========================================================================
+    
+    const API_KEY = process.env.GEN_API_KEY;
+    if (!API_KEY) {
+      return res.status(500).json({ error: 'Server configuration error (missing API key)' });
+    }
 
-    // Server-side Vision OCR (primary) — enabled by default. Set USE_SERVER_VISION=0 to disable.
-    let serverVisionText = '';
-    let serverVisionMetadata = null;
+    // ========================================================================
+    // OCR PROCESSING (if image provided)
+    // ========================================================================
+    
+    let extractedOCR = ocrText || '';
+    
     if (image && process.env.USE_SERVER_VISION !== '0') {
       try {
-        const m = (image || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
-        if (m) {
-          const b64 = m[2];
-          const visionReq = { requests: [{ image: { content: b64 }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }, { type: 'TEXT_DETECTION' }] }] };
+        const match = image.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (match) {
+          const visionReq = {
+            requests: [{
+              image: { content: match[1] },
+              features: [{ type: 'DOCUMENT_TEXT_DETECTION' }]
+            }]
+          };
+          
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 15000);
-          const vResp = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`, { 
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json' }, 
-            body: JSON.stringify(visionReq),
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-          if (!vResp.ok) {
-            console.warn('Vision API error:', vResp.status);
-          } else {
-            const vData = await vResp.json();
-            serverVisionMetadata = vData;
-            if (vData.error) {
-              console.warn('Vision API returned error:', vData.error);
-            } else {
-              serverVisionText = vData.responses?.[0]?.fullTextAnnotation?.text || vData.responses?.[0]?.textAnnotations?.[0]?.description || '';
-              if (serverVisionText) {
-                ocrText = serverVisionText;
-              }
+          const timeout = setTimeout(() => controller.abort(), 12000);
+          
+          const visionRes = await fetch(
+            `https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(visionReq),
+              signal: controller.signal
             }
+          );
+          clearTimeout(timeout);
+          
+          if (visionRes.ok) {
+            const visionData = await visionRes.json();
+            const visionText = visionData.responses?.[0]?.fullTextAnnotation?.text || '';
+            if (visionText) extractedOCR = visionText;
           }
         }
       } catch (e) {
-        console.warn('Server vision OCR failed', e.message);
+        console.warn('Vision OCR failed:', e.message);
       }
     }
 
-    let prompt = `You are an expert investigative journalist and fact-checker working for "The Truth Gazette". This is a capstone project built by Ishant to demonstrate AI-powered fake news detection.\n\nAnalyze the provided content and determine if it contains FAKE NEWS, REAL NEWS, or if the verdict is UNCERTAIN.\n\nConsider these factors:\n- Sensational or clickbait language\n- Emotional manipulation tactics\n- Lack of credible sources or citations\n- Extreme or unverifiable claims\n- Professional journalistic tone vs. opinion-based writing\n- Presence of verifiable facts and evidence\n- URL credibility (if provided)\n- Image context and claims (if image provided)\n\n`;
+    // ========================================================================
+    // BUILD THE PROMPT
+    // ========================================================================
+    
+    const combinedInput = [text, extractedOCR].filter(Boolean).join('\n\n').slice(0, 5000);
+    
+    // Current date for grounding
+    const now = new Date();
+    const currentDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    const currentYear = now.getFullYear();
+    const currentMonth = now.toLocaleString('en-US', { month: 'long' });
+    
+    const systemPrompt = `You are a rigorous fact-checker for "The Truth Gazette". Today is ${currentDate}.
 
-    // If the request included OCR text from the image, include it explicitly for grounding
-    const combinedText = [sanitizedText, (ocrText || '').slice(0, 3000)].filter(Boolean).join('\n\n');
-    if (combinedText) prompt += `\nTEXT TO ANALYZE:\n"${combinedText}"\n`;
-    if (url) prompt += `\nURL PROVIDED: ${url}\nPlease use your knowledge and if possible cite credible sources to verify information from this URL and check its credibility.\n`;
+=== ABSOLUTE RULES (NEVER VIOLATE) ===
 
-    if (image) {
-      // include a short instruction if image provided and note that OCR-text may be included
-      prompt += `\nIMAGE INCLUDED: OCR text (if available) has been included above. Please analyze the image context and verify any claims.\n`;
-      // If no readable text was provided but an image exists, instruct the model to analyze the image visually
-      if (!combinedText) {
-        prompt += `\nNOTE: No readable text was detected in the provided image. Please analyze the image visually: describe visual elements, assess whether the image supports or contradicts factual claims, suggest concrete search queries that a researcher could use to ground or verify the image (e.g., reverse-image or news search terms), and avoid returning 'No content' as a final answer if the image contains verifiable visual evidence.\n`;
-      }
+1. SOURCES & URLs:
+   - ONLY use URLs from Google Search grounding results
+   - NEVER construct, guess, or "fix" URLs
+   - If search returns no URLs, set sources: [] 
+   - Better to have ZERO sources than FAKE sources
+
+2. DATES & TIMES:
+   - ONLY mention specific dates/times if found in search results
+   - Today is ${currentMonth} ${currentYear} - use this as reference
+   - If you can't verify when something happened, say "date unverified"
+   - NEVER guess publication dates, event dates, or timestamps
+
+3. LOCATIONS & NAMES:
+   - ONLY mention locations if confirmed in search results
+   - ONLY use exact names/spellings from verified sources
+   - If unsure about a location or name, acknowledge uncertainty
+
+4. NUMBERS & STATISTICS:
+   - ONLY cite statistics found in search results
+   - Never round or estimate numbers
+   - If a number can't be verified, say "figure unverified"
+
+=== ANALYSIS GUIDELINES ===
+
+- Is the claim logically possible?
+- Are there official sources (government, major news, academic)?
+- Check for sensational language, emotional manipulation, clickbait
+- Cross-reference multiple sources when possible
+- Acknowledge what you CANNOT verify
+
+=== RESPONSE FORMAT ===
+
+Respond with ONLY valid JSON:
+{
+  "verdict": "FAKE" | "REAL" | "UNCERTAIN",
+  "confidence": <60-95>,
+  "headline": "<newspaper-style headline>",
+  "analysis": "<2-3 paragraphs with your reasoning. Be specific about what you verified vs. what you couldn't verify.>",
+  "keyFactors": ["<factor 1>", "<factor 2>", "<factor 3>"],
+  "sources": [{"title": "<exact title>", "url": "<exact URL from search>"}]
+}
+
+Remember: Your credibility depends on NEVER making up information. If you can't verify something, SAY SO.`;
+
+    let userContent = '';
+    if (combinedInput) {
+      userContent += `CLAIM TO ANALYZE:\n"""${combinedInput}"""\n\n`;
     }
+    if (url) {
+      userContent += `PROVIDED URL: ${url}\n\n`;
+    }
+    userContent += `TASK: Use Google Search to find evidence about this claim. 
+- Search for the key entities, names, dates mentioned
+- Find official sources or major news coverage
+- Only cite what you actually find in search results
+- Return the JSON verdict based on verified information`;
 
-    prompt += `\nRespond in the following JSON format:\n{\n  "verdict": "FAKE" or "REAL" or "UNCERTAIN",\n  "confidence": [number between 65-95],\n  "confidence_explanation": "[Brief justification for the numeric confidence — cite evidence: number and quality of sources, grounding search hits, and strength of claims]",\n  "headline": "[Create a dramatic newspaper-style headline about your verdict]",\n  "analysis": "[Detailed explanation as if writing a newspaper article, 2-3 short paragraphs]",\n  "keyFactors": ["factor1", "factor2"],\n  "sources": [ {"title":"source title","url":"https://..."} ]\n}\n\nIMPORTANT: Provide real verifiable URLs when available from reputable institutions (government, major news organizations, research orgs). If only community or opinion sources are found, include them only for INTERNAL cross-check and do not provide them in the 'sources' output.\nNote: Avoid always using the same numeric confidence; tailor the number to the evidence and explain why in 'confidence_explanation'.\n`;
-
-    // Extra instruction to prevent fabrication of URLs/dates. Server will verify any URLs returned by the model.
-    prompt += `\nCRITICAL: Do NOT invent, rewrite, or normalize source URLs or publication dates. If you cannot find a reliable URL for a claim, respond with {"url":"SOURCE_UNAVAILABLE"} and do not fabricate one. When stating a publication date, include the exact text excerpt that supports it from the source.\n`;
+    // ========================================================================
+    // CALL GEMINI API WITH GOOGLE SEARCH GROUNDING
+    // ========================================================================
+    
+    const MODEL = process.env.GEN_MODEL || 'gemini-2.5-flash';
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
 
     const requestBody = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.7, topK: 40, topP: 0.95 }
+      contents: [{
+        parts: [{ text: userContent }]
+      }],
+      systemInstruction: {
+        parts: [{ text: systemPrompt }]
+      },
+      generationConfig: {
+        temperature: 0.3,  // Lower temperature for more factual responses
+        topK: 20,
+        topP: 0.8
+      },
+      // ALWAYS enable Google Search - this is the key fix!
+      tools: [{ google_search: {} }]
     };
 
-    if (url) requestBody.tools = [{ google_search: {} }];
+    const apiResponse = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
 
-    // Call Generative API server-side
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
-    const r = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
-    const data = await r.json();
-    if (!r.ok) return res.status(500).json({ error: data.error?.message || 'Provider error' });
+    const apiData = await apiResponse.json();
+    
+    if (!apiResponse.ok) {
+      console.error('Gemini API error:', apiData);
+      return res.status(500).json({ 
+        error: apiData.error?.message || 'AI service error. Please try again.' 
+      });
+    }
 
-    // Parse model response and extract JSON
-    const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const jsonMatch = aiText.match(/\{[\s\S]*\}/);
-    const jsonText = jsonMatch ? jsonMatch[0] : null;
-    let result = null;
+    // ========================================================================
+    // PARSE RESPONSE
+    // ========================================================================
+    
+    const rawText = apiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const groundingMeta = apiData.candidates?.[0]?.groundingMetadata || null;
+    
+    // Extract JSON from response
+    let result;
     try {
-      result = jsonText ? JSON.parse(jsonText) : { analysis: aiText, verdict: 'UNCERTAIN', confidence: 65 };
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
     } catch (e) {
-      result = { analysis: aiText, verdict: 'UNCERTAIN', confidence: 65 };
+      result = null;
     }
 
-    const groundingMetadata = data.candidates?.[0]?.groundingMetadata || null;
+    // Fallback if JSON parsing fails
+    if (!result || !result.verdict) {
+      result = {
+        verdict: 'UNCERTAIN',
+        confidence: 60,
+        headline: 'Analysis Inconclusive',
+        analysis: rawText || 'Unable to analyze the provided content.',
+        keyFactors: ['Unable to parse AI response'],
+        sources: []
+      };
+    }
 
-    // Attach any server-side vision OCR metadata/output for transparency
-    if (serverVisionText) result.vision_ocr = serverVisionText;
-    if (serverVisionMetadata) result.vision_metadata = serverVisionMetadata;
+    // ========================================================================
+    // EXTRACT SOURCES FROM GROUNDING METADATA (THE REAL FIX!)
+    // ========================================================================
+    
+    // Prefer grounding chunks over model-generated sources
+    let verifiedSources = [];
+    
+    if (groundingMeta?.groundingChunks?.length > 0) {
+      // Use ONLY the URLs from Google Search grounding - these are real
+      verifiedSources = groundingMeta.groundingChunks
+        .filter(chunk => chunk.web?.uri)
+        .map(chunk => ({
+          title: chunk.web.title || 'Source',
+          url: chunk.web.uri,
+          verified: true,
+          fromGrounding: true
+        }))
+        .slice(0, 5); // Limit to 5 sources
+    }
+    
+    // If model provided sources but grounding didn't, verify them carefully
+    if (verifiedSources.length === 0 && Array.isArray(result.sources) && result.sources.length > 0) {
+      const verificationPromises = result.sources
+        .filter(s => s?.url && s.url !== 'SOURCE_UNAVAILABLE')
+        .filter(s => !detectHallucinatedURL(s.url)) // Filter out obviously fake URLs
+        .slice(0, 5)
+        .map(async (source) => {
+          const verification = await verifySourceURL(source.url);
+          return {
+            title: source.title || verification.title || 'Source',
+            url: verification.archivedUrl || source.url,
+            verified: verification.verified,
+            status: verification.status,
+            error: verification.error,
+            fromGrounding: false
+          };
+        });
+      
+      verifiedSources = await Promise.all(verificationPromises);
+    }
 
-    // Verify model-provided sources (do not trust unverified URLs). This fetches the URL and confirms status and excerpt/date where possible.
-    if (Array.isArray(result.sources)) {
-      for (let i = 0; i < result.sources.length; i++) {
-        const s = result.sources[i] || {};
-        try {
-          if (!s.url || s.url === 'SOURCE_UNAVAILABLE') {
-            s.verification = { ok: false, reason: 'source_unavailable' };
-            continue;
-          }
-          const v = await verifySource(s.url, s.excerpt || '');
-          s.verification = v;
-          // If archive was used, attach archived url
-          if (v.archivedUrl) s.archivedUrl = v.archivedUrl;
-          // If excerpt was not found, mark as suspicious
-          if (s.verification.ok && s.excerpt && !s.verification.excerptFound) {
-            s.verification.excerptFound = false;
-            s.verification.reason = (s.verification.reason || '') + '; excerpt-mismatch';
-          }
-          // If model claimed a publication date, compare with discovered date and flag mismatch
-          const claimedDate = s.date || s.published_date || s.publishedDate || s.pubDate || null;
-          if (claimedDate && s.verification && s.verification.foundDate) {
-            const cd = String(claimedDate).slice(0,10);
-            const fd = String(s.verification.foundDate).slice(0,10);
-            if (cd && fd && !fd.includes(cd) && !cd.includes(fd)) {
-              s.verification.dateMismatch = true;
-              s.verification.reason = (s.verification.reason || '') + '; date-mismatch';
-            }
-          }
-        } catch (e) {
-          s.verification = { ok: false, reason: 'verify-error' };
-        }
+    // Filter to only verified sources for display
+    const displaySources = verifiedSources.filter(s => s.verified);
+    const unverifiedCount = verifiedSources.filter(s => !s.verified).length;
+
+    // ========================================================================
+    // COMPUTE CONFIDENCE
+    // ========================================================================
+    
+    let confidence = result.confidence || 65;
+    
+    // Adjust based on source verification
+    if (displaySources.length >= 3) confidence = Math.min(95, confidence + 5);
+    else if (displaySources.length >= 1) confidence = Math.min(95, confidence + 2);
+    else if (unverifiedCount > 0) confidence = Math.max(60, confidence - 10);
+    
+    // Check for trusted domains
+    const trustedDomains = ['.gov', '.edu', 'reuters.com', 'apnews.com', 'bbc.', 'nytimes.com'];
+    const hasTrusted = displaySources.some(s => 
+      trustedDomains.some(d => s.url.toLowerCase().includes(d))
+    );
+    if (hasTrusted) confidence = Math.min(95, confidence + 5);
+    
+    // Clamp confidence
+    confidence = Math.max(60, Math.min(95, Math.round(confidence)));
+
+    // ========================================================================
+    // BUILD FINAL RESPONSE
+    // ========================================================================
+    
+    const finalResult = {
+      verdict: result.verdict,
+      confidence,
+      headline: result.headline,
+      analysis: result.analysis,
+      keyFactors: result.keyFactors || [],
+      sources: displaySources,
+      _meta: {
+        verifiedSourceCount: displaySources.length,
+        unverifiedSourceCount: unverifiedCount,
+        hadGrounding: groundingMeta?.groundingChunks?.length > 0,
+        searchUsed: !!groundingMeta?.searchEntryPoint || !!groundingMeta?.groundingChunks?.length,
+        analysisDate: currentDate,
+        quotaRemaining: quota.remaining
       }
+    };
+
+    // Include OCR text if extracted
+    if (extractedOCR && extractedOCR !== ocrText) {
+      finalResult._meta.ocrExtracted = true;
     }
 
-    // Compute a deterministic, calibrated confidence score and explanation from model output
-    function computeConfidenceAndExplanation(res, grounding) {
-      const verdict = (res.verdict || 'UNCERTAIN').toUpperCase();
-      const sources = Array.isArray(res.sources) ? res.sources : [];
-      // Consider only verified sources for boosts
-      const verified = sources.filter(s => s && s.verification && s.verification.ok);
-      const unverifiedCount = sources.length - verified.length;
+    const output = { result: finalResult, groundingMetadata: groundingMeta };
 
-      let score = 65;
-      if (verdict === 'REAL') score = 75;
-      else if (verdict === 'FAKE') score = 72;
-      else score = 65;
-
-      // reward number of verified sources
-      if (verified.length >= 1) score += 5;
-      if (verified.length >= 3) score += 8;
-
-      // boost for trusted domains among verified sources
-      const trusted = ['gov','edu','nytimes.com','bbc.co.uk','theguardian.com','reuters.com','apnews.com'];
-      const hasTrusted = verified.some(s => {
-        try {
-          const u = (s.url || '').toLowerCase();
-          return trusted.some(t => u.includes(t));
-        } catch (e) { return false; }
-      });
-      if (hasTrusted) score += 8;
-
-      // penalty for unverified sources
-      if (unverifiedCount > 0) {
-        score -= Math.min(10, unverifiedCount * 5); // penalize up to 10 points
-      }
-
-      // grounding metadata hints
-      if (grounding && Array.isArray(grounding.found) && grounding.found.length > 0) score += 4;
-
-      // penalty for any date mismatch in verified sources
-      const hasDateMismatch = sources.some(s => s && s.verification && s.verification.dateMismatch);
-      if (hasDateMismatch) score -= 4;
-
-      // clamp into allowed range
-      score = Math.max(65, Math.min(95, score));
-
-      const parts = [];
-      parts.push(`Verdict: ${verdict}`);
-      parts.push(`${verified.length} verified source(s) and ${unverifiedCount} unverified`);
-      if (hasTrusted) parts.push('Includes trusted source(s)');
-      if (grounding && Array.isArray(grounding.found) && grounding.found.length > 0) parts.push('Grounding search found evidence');
-      const explanation = parts.join('; ');
-
-      return { score, explanation };
-    }
-
-    // build a verification summary (verified/unverified counts and date mismatches)
-    const verificationSummary = { verifiedCount: 0, unverifiedCount: 0, dateMismatches: [] };
-    if (Array.isArray(result.sources)) {
-      result.sources.forEach(s => {
-        if (s && s.verification && s.verification.ok) verificationSummary.verifiedCount++;
-        else verificationSummary.unverifiedCount++;
-        if (s && s.verification && s.verification.dateMismatch) verificationSummary.dateMismatches.push(s.url || s.title || 'unknown');
-      });
-    }
-
-    // Preserve model-provided confidence for transparency, but compute and override with deterministic value
-    const modelConfidence = result.confidence;
-    const computed = computeConfidenceAndExplanation(result, groundingMetadata);
-    result.modelConfidence = modelConfidence;
-    result.confidence = computed.score;
-    result.confidence_explanation = result.confidence_explanation || computed.explanation;
-
-    const out = { result, groundingMetadata, quotaRemaining, verificationSummary };
-
-
-    // If the model returned a 'no content' style response but we did provide OCR or image, re-run the model once with an explicit instruction to use the provided OCR/text
-    const lowerAi = (aiText || '').toLowerCase();
-    const noContentPhrases = ['no content', 'no material', 'no input provided', "there's no content", 'nothing to investigate'];
-    const flagged = noContentPhrases.some(p => lowerAi.includes(p));
-    if (flagged && combinedText) {
-      try {
-        const hintPrompt = `\nIMPORTANT: The user provided the following text extracted from the image or input, you MUST analyze it and not return a "no content" response.\n"""${combinedText}\n"""\nPlease re-evaluate and produce the JSON output as requested.`;
-        requestBody.contents[0].parts[0].text = prompt + hintPrompt;
-        const r2 = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) });
-        const d2 = await r2.json();
-        if (r2.ok) {
-          const aiText2 = d2.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          const jsonMatch2 = aiText2.match(/\{[\s\S]*\}/);
-          if (jsonMatch2) {
-            try {
-              const result2 = JSON.parse(jsonMatch2[0]);
-              result.rerun = true;
-              result.rerun_reason = 'model returned no-content; re-run with explicit hint';
-              result.rerun_result = result2;
-              // prefer new result
-              result = result2;
-              out.result = result;
-            } catch (e) {
-              // ignore parse error and keep first result
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Re-run after no-content failed', e);
-      }
-    }
-
+    // ========================================================================
+    // CACHE RESULT
+    // ========================================================================
+    
     if (useUpstash && redisClient) {
-      await redisClient.set(`investigate:${key}`, JSON.stringify(out), { ex: 60 * 60 }); // cache 1 hour
+      await redisClient.set(`cache:${inputHash}`, JSON.stringify(output), { ex: 3600 });
     }
 
-    // Do NOT return API keys or raw provider data exposing secrets
-    return res.status(200).json(out);
+    return res.status(200).json(output);
 
   } catch (err) {
-    console.error('investigate error', err);
-    return res.status(500).json({ error: 'Server error' });
+    console.error('Investigate error:', err);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 };
