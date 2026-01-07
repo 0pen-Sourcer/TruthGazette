@@ -378,11 +378,17 @@ Respond with ONLY valid JSON:
 {
   "verdict": "FAKE" | "REAL" | "UNCERTAIN",
   "confidence": <60-95>,
-  "confidenceReason": "<1 sentence explaining WHY you gave this confidence level - what evidence supports or undermines the claim?>",
+  "confidenceReason": "<1 sentence explaining WHY you gave this confidence level>",
   "headline": "<newspaper-style headline>",
-  "analysis": "<2-3 paragraphs with your reasoning. Be specific about what you verified vs. what you couldn't verify.>",
+  "analysis": "<2-3 paragraphs with your reasoning>",
   "keyFactors": ["<factor 1>", "<factor 2>", "<factor 3>"],
-  "sources": [{"title": "<exact title>", "url": "<exact URL from search>"}]
+  "sources": [
+    {
+      "title": "<source name/publication>",
+      "url": "<exact URL from search>",
+      "snippet": "<1 short sentence: what this source says about the claim>"
+    }
+  ]
 }
 
 Remember: Your credibility depends on NEVER making up information. If you can't verify something, SAY SO.`;
@@ -473,17 +479,65 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     // Prefer grounding chunks over model-generated sources
     let verifiedSources = [];
     
+    // Extract grounding support snippets if available
+    const groundingSupports = groundingMeta?.groundingSupports || [];
+    const snippetMap = new Map();
+    groundingSupports.forEach(support => {
+      if (support.segment?.text && support.groundingChunkIndices?.length > 0) {
+        support.groundingChunkIndices.forEach(idx => {
+          if (!snippetMap.has(idx)) {
+            snippetMap.set(idx, support.segment.text.slice(0, 150));
+          }
+        });
+      }
+    });
+    
     if (groundingMeta?.groundingChunks?.length > 0) {
-      // Use ONLY the URLs from Google Search grounding - these are real
+      // Extract real URLs - check for retrievedContext first, then web
       verifiedSources = groundingMeta.groundingChunks
-        .filter(chunk => chunk.web?.uri)
-        .map(chunk => ({
-          title: chunk.web.title || 'Source',
-          url: chunk.web.uri,
-          verified: true,
-          fromGrounding: true
-        }))
-        .slice(0, 5); // Limit to 5 sources
+        .map((chunk, idx) => {
+          // Try to get the actual URL (not the vertex proxy)
+          let realUrl = chunk.web?.uri || '';
+          let title = chunk.web?.title || 'Source';
+          
+          // If URL is a vertex proxy, try to extract domain from title
+          if (realUrl.includes('vertexaisearch.cloud.google.com')) {
+            // The title usually contains the real domain
+            const domainMatch = title.match(/^([a-zA-Z0-9.-]+\.[a-z]{2,})/);
+            if (domainMatch) {
+              realUrl = `https://${domainMatch[1]}`;
+            }
+          }
+          
+          return {
+            title: title,
+            url: realUrl,
+            snippet: snippetMap.get(idx) || '',
+            verified: true,
+            fromGrounding: true
+          };
+        })
+        .filter(s => s.url && !s.url.includes('vertexaisearch'))
+        .slice(0, 5);
+    }
+    
+    // If we got grounding sources but AI also provided sources with snippets, merge the snippets
+    if (verifiedSources.length > 0 && Array.isArray(result.sources)) {
+      result.sources.forEach(aiSource => {
+        if (aiSource?.snippet) {
+          // Find matching source by domain and add snippet if missing
+          const match = verifiedSources.find(vs => {
+            try {
+              const vsDomain = new URL(vs.url).hostname.replace('www.', '');
+              const aiDomain = new URL(aiSource.url).hostname.replace('www.', '');
+              return vsDomain === aiDomain;
+            } catch { return false; }
+          });
+          if (match && !match.snippet) {
+            match.snippet = aiSource.snippet;
+          }
+        }
+      });
     }
     
     // If model provided sources but grounding didn't, verify them carefully
@@ -497,6 +551,7 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
           return {
             title: source.title || verification.title || 'Source',
             url: verification.archivedUrl || source.url,
+            snippet: source.snippet || '',
             verified: verification.verified,
             status: verification.status,
             error: verification.error,

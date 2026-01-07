@@ -811,24 +811,30 @@
             const sources = result.sources || [];
             
             if (sources.length > 0) {
-                const blockedDomains = ['reddit.com', 'quora.com', 'medium.com'];
+                const blockedDomains = ['reddit.com', 'quora.com', 'medium.com', 'vertexaisearch'];
                 let counter = 0;
                 const sourceItems = sources
                     .filter(s => s && s.url)
                     .filter(s => {
                         try {
                             const domain = new URL(s.url).hostname.replace('www.', '');
-                            return !blockedDomains.some(b => domain.includes(b));
+                            return !blockedDomains.some(b => s.url.includes(b) || domain.includes(b));
                         } catch (e) { return true; }
                     })
                     .map(source => {
                         counter++;
                         let domain = '';
                         try { domain = new URL(source.url).hostname.replace('www.', ''); } catch (e) {}
+                        
+                        // Use snippet if available, otherwise show domain
+                        const descText = source.snippet 
+                            ? source.snippet.slice(0, 120) + (source.snippet.length > 120 ? '...' : '')
+                            : domain;
+                        
                         return `<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">
                             <div class="source-left">
                                 <span class="source-title"><strong>[${counter}]</strong> ${source.title || domain}</span>
-                                ${domain ? `<span class="source-desc" style="margin-top:4px; font-size:0.85em; color:#888;">${domain}</span>` : ''}
+                                <span class="source-desc" style="margin-top:4px; font-size:0.85em; color:#666;">${descText}</span>
                             </div>
                             <i class="fas fa-external-link-alt"></i>
                         </a>`;
@@ -838,7 +844,7 @@
                 if (sourceItems) {
                     sourcesHTML = `
                         <div class="sources-section">
-                            <h4><i class="fas fa-book"></i> Sources:</h4>
+                            <h4><i class="fas fa-book"></i> Sources <span style="font-size:0.75em; color:#27ae60; font-weight:normal;">(${counter} verified)</span></h4>
                             ${sourceItems}
                         </div>
                     `;
