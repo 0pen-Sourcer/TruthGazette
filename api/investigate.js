@@ -493,32 +493,74 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     });
     
     if (groundingMeta?.groundingChunks?.length > 0) {
-      // Extract real URLs - check for retrievedContext first, then web
-      verifiedSources = groundingMeta.groundingChunks
-        .map((chunk, idx) => {
-          // Try to get the actual URL (not the vertex proxy)
-          let realUrl = chunk.web?.uri || '';
-          let title = chunk.web?.title || 'Source';
-          
-          // If URL is a vertex proxy, try to extract domain from title
-          if (realUrl.includes('vertexaisearch.cloud.google.com')) {
-            // The title usually contains the real domain
-            const domainMatch = title.match(/^([a-zA-Z0-9.-]+\.[a-z]{2,})/);
-            if (domainMatch) {
-              realUrl = `https://${domainMatch[1]}`;
-            }
+      // Extract richer URLs and snippets from grounding chunks
+      // Strategy: prefer any explicit retrievedContext.uri, then try to recover an encoded
+      // original URL from vertex proxy links (query params), and finally verify each URL.
+      const chunks = groundingMeta.groundingChunks.slice(0, 10); // take up to 10 to pick the best 5
+      const candidates = await Promise.all(chunks.map(async (chunk, idx) => {
+        let webUri = chunk.web?.uri || '';
+        let realUrl = webUri;
+        let title = chunk.web?.title || 'Source';
+
+        // Use retrievedContext.uri if present and it looks like a real URL
+        if (chunk.retrievedContext?.uri && typeof chunk.retrievedContext.uri === 'string') {
+          if (!chunk.retrievedContext.uri.includes('vertexaisearch')) {
+            realUrl = chunk.retrievedContext.uri;
           }
-          
-          return {
-            title: title,
-            url: realUrl,
-            snippet: snippetMap.get(idx) || '',
-            verified: true,
-            fromGrounding: true
-          };
-        })
-        .filter(s => s.url && !s.url.includes('vertexaisearch'))
-        .slice(0, 5);
+        }
+
+        // If still a proxy, try to extract the original URL from query params or encoded patterns
+        if (realUrl && realUrl.includes('vertexaisearch')) {
+          try {
+            const p = new URL(realUrl);
+            // common param names where original URL might be stored
+            for (const k of ['u', 'url', 'q', 'r', 'redirect', 'target']) {
+              const v = p.searchParams.get(k);
+              if (v && (v.startsWith('http') || v.startsWith('https') || v.startsWith('http%3A') || v.startsWith('http%3S') )) {
+                realUrl = decodeURIComponent(v);
+                break;
+              }
+            }
+            // fallback: look for an encoded https pattern in the whole URL string
+            if (realUrl.includes('vertexaisearch') || !realUrl.startsWith('http')) {
+              const enc = realUrl.match(/(https?:%2F%2F[^&\s]+)/i);
+              if (enc && enc[1]) realUrl = decodeURIComponent(enc[1]);
+            }
+          } catch (e) { /* ignore parse errors */ }
+        }
+
+        // Last-resort: if title contains a visible URL-like substring, try to use it
+        if ((!realUrl || realUrl.includes('vertexaisearch')) && title) {
+          const urlLike = title.match(/https?:\/\/[\w\.-\/\?&=%#-]+/i);
+          if (urlLike && urlLike[0]) realUrl = urlLike[0];
+        }
+
+        // If we ended up with a domain-only URL (no path), try to keep it but prefer verified responses
+        // Verify the URL (this will also try Web Archive fallback inside verifySourceURL)
+        let verification = null;
+        if (realUrl && realUrl.startsWith('http')) {
+          try {
+            verification = await verifySourceURL(realUrl);
+          } catch (e) { verification = null; }
+        }
+
+        // Prefer finalUrl from verification if available (redirects / archival)
+        const finalUrl = verification?.finalUrl || verification?.archivedUrl || realUrl || '';
+        const verified = !!(verification && verification.verified);
+
+        return {
+          title,
+          url: finalUrl,
+          snippet: snippetMap.get(idx) || '',
+          verified,
+          fromGrounding: true
+        };
+      }));
+
+      // Prefer verified sources first; then add unverified as fallback, keep up to 5
+      const verifiedFirst = candidates.filter(c => c.url && c.verified);
+      const unverified = candidates.filter(c => c.url && !c.verified);
+      verifiedSources = verifiedFirst.concat(unverified).slice(0, 5);
     }
     
     // If we got grounding sources but AI also provided sources with snippets, merge the snippets
