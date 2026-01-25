@@ -806,6 +806,14 @@
                 ? result.keyFactors.map(factor => `<li><i class="fas fa-caret-right"></i>${factor}</li>`).join('')
                 : '';
 
+            // Meta and last-checked text
+            const meta = result._meta || {};
+            let lastVerifiedText = '';
+            if (meta.lastVerifiedAt) {
+                const d = new Date(meta.lastVerifiedAt);
+                lastVerifiedText = `Last checked ${d.toLocaleString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })} UTC`;
+            }
+
             // Build sources HTML - prefer result.sources (already verified by backend)
             let sourcesHTML = '';
             const sources = result.sources || [];
@@ -844,7 +852,7 @@
                 if (sourceItems) {
                     sourcesHTML = `
                         <div class="sources-section">
-                            <h4><i class="fas fa-book"></i> Sources <span style="font-size:0.75em; color:#27ae60; font-weight:normal;">(${counter} verified)</span></h4>
+                            <h4><i class="fas fa-book"></i> Sources <span style="font-size:0.75em; color:#27ae60; font-weight:normal;">(${counter} verified)</span>${lastVerifiedText ? `<span style="font-size:0.75em; color:#666; font-weight:normal; margin-left:8px;">• ${lastVerifiedText}</span>` : ''}</h4>
                             ${sourceItems}
                         </div>
                     `;

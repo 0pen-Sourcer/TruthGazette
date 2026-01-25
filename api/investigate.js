@@ -116,6 +116,7 @@ async function verifySourceURL(url) {
 
     if (response.ok) {
       result.verified = true;
+      result.verifiedAt = new Date().toISOString();
       // Try to extract title from HTML
       const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('text/html')) {
@@ -129,6 +130,7 @@ async function verifySourceURL(url) {
       if (archived) {
         result.archivedUrl = archived;
         result.verified = true;
+        result.verifiedAt = new Date().toISOString();
         result.error = 'original-404-archived-found';
       } else {
         result.error = `http-${response.status}`;
@@ -141,6 +143,7 @@ async function verifySourceURL(url) {
     if (archived) {
       result.archivedUrl = archived;
       result.verified = true;
+      result.verifiedAt = new Date().toISOString();
       result.error = 'original-unreachable-archived-found';
     }
   }
@@ -547,12 +550,14 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
         // Prefer finalUrl from verification if available (redirects / archival)
         const finalUrl = verification?.finalUrl || verification?.archivedUrl || realUrl || '';
         const verified = !!(verification && verification.verified);
+        const verifiedAt = verification?.verifiedAt || null;
 
         return {
           title,
           url: finalUrl,
           snippet: snippetMap.get(idx) || '',
           verified,
+          verifiedAt,
           fromGrounding: true
         };
       }));
@@ -595,6 +600,7 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
             url: verification.archivedUrl || source.url,
             snippet: source.snippet || '',
             verified: verification.verified,
+            verifiedAt: verification.verifiedAt || null,
             status: verification.status,
             error: verification.error,
             fromGrounding: false
@@ -633,6 +639,8 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     // BUILD FINAL RESPONSE
     // ========================================================================
     
+    const lastVerifiedAt = (displaySources.map(s => s.verifiedAt).filter(Boolean).sort() || []).pop() || null;
+
     const finalResult = {
       verdict: result.verdict,
       confidence,
@@ -647,6 +655,7 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
         hadGrounding: groundingMeta?.groundingChunks?.length > 0,
         searchUsed: !!groundingMeta?.searchEntryPoint || !!groundingMeta?.groundingChunks?.length,
         analysisDate: currentDate,
+        lastVerifiedAt,
         quotaRemaining: quota.remaining
       }
     };
