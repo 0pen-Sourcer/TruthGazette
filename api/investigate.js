@@ -489,7 +489,7 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
       if (support.segment?.text && support.groundingChunkIndices?.length > 0) {
         support.groundingChunkIndices.forEach(idx => {
           if (!snippetMap.has(idx)) {
-            snippetMap.set(idx, support.segment.text.slice(0, 150));
+            snippetMap.set(idx, support.segment.text.replace(/\n/g, ' ').slice(0, 150));
           }
         });
       }
@@ -552,10 +552,15 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
         const verified = !!(verification && verification.verified);
         const verifiedAt = verification?.verifiedAt || null;
 
+        // Try snippetMap first, then fall back to chunk's own web snippet, then title
+        const rawSnippet = snippetMap.get(idx) 
+          || chunk.web?.snippet 
+          || chunk.retrievedContext?.text?.replace(/\n/g, ' ').slice(0, 150)
+          || '';
         return {
           title,
           url: finalUrl,
-          snippet: snippetMap.get(idx) || '',
+          snippet: rawSnippet,
           verified,
           verifiedAt,
           fromGrounding: true

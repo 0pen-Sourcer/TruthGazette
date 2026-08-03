@@ -544,7 +544,14 @@
         <div class="newspaper-header">
             <div class="masthead"> THE TRUTH GAZETTE</div>
             <div class="subheader">Est. 2025 | AI-Powered News Verification Bureau</div>
-            <div class="date-line">DECEMBER 2025 EDITION | CAPSTONE PROJECT BY ISHANT</div>
+            <div class="date-line" id="dynamic-edition">AUGUST 2026 EDITION | AI-POWERED MEDIA LITERACY PLATFORM</div>
+        <script>
+          (function() {
+            const months = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
+            const now = new Date();
+            document.getElementById('dynamic-edition').textContent = months[now.getMonth()] + ' ' + now.getFullYear() + ' EDITION | AI-POWERED MEDIA LITERACY PLATFORM';
+          })();
+        </script>
         </div>
 
         <div class="newspaper-content">
@@ -593,7 +600,7 @@
 
         <div class="footer">
             <p><strong><i class="fas fa-balance-scale"></i> THE TRUTH GAZETTE - FAKE NEWS DETECTION BUREAU <i class="fas fa-balance-scale"></i></strong></p>
-            <p>A Capstone Project by Ishant | December 2025</p>
+            <p>An AI-Powered Media Literacy Platform by Ishant</p>
             <p style="margin-top: 15px; font-size: 0.8em;">Disclaimer: This AI tool provides analysis to assist in fact-checking. Always verify important information through multiple credible sources.</p>
         </div>
     </div>
@@ -906,7 +913,7 @@
                         ${sourcesHTML}
 
                         <div style="margin-top: 25px; padding: 15px; background: #fafaf8; border: 1px solid #ddd; font-size: 0.9em; text-align: center;">
-                            <strong><i class="fas fa-balance-scale"></i> Editorial Note:</strong> This analysis was conducted by AI technology as part of Ishant's capstone project. 
+                            <strong><i class="fas fa-balance-scale"></i> Editorial Note:</strong> This analysis was conducted by Truth Gazette's AI verification engine. Always cross-reference important information through multiple credible sources. 
                             Always cross-reference important information with multiple credible sources.
                         </div>
                     </div>
