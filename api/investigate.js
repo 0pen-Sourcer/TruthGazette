@@ -230,14 +230,141 @@ function toReadableSnippet(raw, maxLen = 160) {
   return s;
 }
 
-// Used when a source genuinely has no usable text. Describes the source's role
-// rather than inventing a quote it never made.
-function fallbackSnippet(title, url) {
-  let domain = '';
-  try { domain = new URL(url).hostname.replace(/^www\./, ''); } catch (e) { /* not a URL */ }
-  if (domain) return `Supporting coverage from ${domain} cited during verification of this claim.`;
-  if (title) return `${title} — referenced during verification of this claim.`;
-  return 'Referenced during verification of this claim.';
+function decodeEntities(str) {
+  if (!str) return '';
+  return str
+    .replace(/&(?:nbsp|#160);/gi, ' ')
+    .replace(/&(?:amp|#38);/gi, '&')
+    .replace(/&(?:lt|#60);/gi, '<')
+    .replace(/&(?:gt|#62);/gi, '>')
+    .replace(/&(?:quot|#34);/gi, '"')
+    .replace(/&(?:apos|#39|#x27);/gi, "'")
+    .replace(/&(?:mdash|#8212);/gi, '—')
+    .replace(/&(?:ndash|#8211);/gi, '–')
+    .replace(/&(?:rsquo|#8217);/gi, '’')
+    .replace(/&(?:hellip|#8230);/gi, '…')
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+
+// Pull the page's own description straight from its HTML.
+//
+// Grounding metadata only carries a handful of groundingSupports segments for
+// the whole result set, so there is simply not enough text in it to give every
+// source its own line. The page itself always has one, and it is genuinely
+// that source's words rather than something borrowed from a sibling result.
+async function fetchPageMeta(url) {
+  const meta = { description: '', title: '' };
+  if (!url || !url.startsWith('http')) return meta;
+
+  try {
+    const urlObj = new URL(url);
+    if (isPrivateIP(urlObj.hostname)) return meta;
+
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      // Some publishers serve a stub to non-browser agents
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TruthGazette/1.0; +https://truthgazette.vercel.app)' }
+    }, 4000);
+    if (!response.ok) return meta;
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/html')) return meta;
+
+    // The <head> is all we need; no reason to parse a megabyte of article body
+    const html = (await response.text()).slice(0, 200000);
+    const pick = (re) => { const m = html.match(re); return m ? decodeEntities(m[1]).trim() : ''; };
+
+    meta.description =
+      pick(/<meta[^>]+property=["']og:description["'][^>]*content=["']([^"']*)["']/i) ||
+      pick(/<meta[^>]+content=["']([^"']*)["'][^>]*property=["']og:description["']/i) ||
+      pick(/<meta[^>]+name=["']description["'][^>]*content=["']([^"']*)["']/i) ||
+      pick(/<meta[^>]+content=["']([^"']*)["'][^>]*name=["']description["']/i) ||
+      pick(/<meta[^>]+name=["']twitter:description["'][^>]*content=["']([^"']*)["']/i);
+
+    meta.title =
+      pick(/<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']*)["']/i) ||
+      pick(/<title[^>]*>([^<]+)<\/title>/i);
+
+    // Plenty of pages ship no description meta at all (Wikipedia among them).
+    // The first substantial paragraph is a fair stand-in.
+    if (!meta.description) {
+      const stripped = html
+        .replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+      const paragraphs = stripped.match(/<p\b[^>]*>[\s\S]{60,2000}?<\/p>/gi) || [];
+      for (const p of paragraphs) {
+        const text = decodeEntities(p.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+        // Skip cookie banners and nav blurbs: want a real sentence
+        if (text.length >= 80 && /[.!?]/.test(text) && !/^(cookie|we use cookies|skip to)/i.test(text)) {
+          meta.description = text;
+          break;
+        }
+      }
+    }
+  } catch (e) { /* unreachable or slow site: caller falls back */ }
+
+  return meta;
+}
+
+// Gemini often labels a chunk with a bare domain ("jpost.com") instead of the
+// article headline. Worth replacing with the page's real title when we have it.
+function looksLikeBareDomain(title) {
+  return !title || title === 'Source' || /^(www\.)?[\w-]+(\.[\w-]+)+$/.test(title.trim());
+}
+
+// A page's own description is only worth showing if it says something about
+// the story. Homepages and section pages ship boilerplate ("Visit X for the
+// latest news, video and analysis") which is authentic but tells the reader
+// nothing, and padding a source card with it reads as invented. We would
+// rather show nothing than filler.
+function isInformativeDescription(text, url) {
+  if (!text) return false;
+
+  const words = text.trim().split(/\s+/);
+  // Needs to be a real sentence, not a label or a headline fragment
+  if (text.length < 50 || words.length < 9) return false;
+
+  const junk = [
+    // Site boilerplate
+    /^(visit|welcome to|browse|explore|discover|read|find) /i,
+    /latest news, (video|breaking|sport)/i,
+    /\byour (source|guide|home) for\b/i,
+    /\b(home ?page|official (web)?site)\b/i,
+    /\ball rights reserved\b/i,
+    // Consent, paywall and interstitials
+    /\b(we use cookies|cookie policy|accept (all )?cookies|consent)\b/i,
+    /\b(enable|turn on) javascript\b/i,
+    /\bjavascript is (disabled|required)\b/i,
+    /\b(subscribe|sign in|log in|register) to (continue|read|view)\b/i,
+    /\b(subscribers only|premium (article|content)|paywall)\b/i,
+    /\b(create an account|newsletter sign[- ]?up)\b/i,
+    // Errors
+    /\b(page not found|404|403|access denied|forbidden|error occurred)\b/i,
+    /\b(are you a robot|verify you are human|checking your browser)\b/i,
+    // Commerce and SEO spam
+    /\b(buy now|shop now|order online|free shipping|best deals?|lowest price|discount code)\b/i,
+    /\b(click here|download now|install the app|get the app)\b/i,
+    /\b(casino|betting|crypto ?currency giveaway|forex)\b/i
+  ];
+  if (junk.some(re => re.test(text))) return false;
+
+  // Keyword soup: SEO descriptions are often comma-separated terms with no
+  // actual sentence in them.
+  const commas = (text.match(/,/g) || []).length;
+  if (commas >= 4 && !/[.!?]/.test(text)) return false;
+  if (commas > words.length / 3) return false;
+
+  // Needs at least one lowercase run; ALL-CAPS blurbs are banners, not prose
+  if (!/[a-z]{3}/.test(text)) return false;
+
+  // A bare domain root is a section or landing page, not the article the claim
+  // actually rests on, so its description describes the outlet, not the story.
+  try {
+    const path = new URL(url).pathname.replace(/\/+$/, '');
+    if (path.split('/').filter(Boolean).length < 1) return false;
+  } catch (e) { /* keep going */ }
+
+  return true;
 }
 
 function checkLocalRateLimit(key, limit) {
@@ -728,17 +855,66 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
 
     // Final guarantee: whichever branch produced the sources, every card that
     // reaches the UI gets a clean, non-empty, non-duplicated snippet.
+    //
+    // Grounding only ever supplies a couple of support segments for the whole
+    // result set, so most cards arrive here with nothing of their own. Rather
+    // than repeat a sibling's sentence (which is what made every source look
+    // identical) we go and read each page's own description.
     const seenSnippets = new Set();
-    verifiedSources = verifiedSources.map(source => {
-      let snippet = toReadableSnippet(source.snippet);
+    const needsLookup = [];
+
+    verifiedSources = verifiedSources.map((source, i) => {
+      const snippet = toReadableSnippet(source.snippet);
       const key = snippet.toLowerCase();
-      if (!snippet || seenSnippets.has(key)) {
-        snippet = fallbackSnippet(source.title, source.url);
-      } else {
+      if (snippet && !seenSnippets.has(key)) {
         seenSnippets.add(key);
+        return { ...source, snippet };
       }
-      return { ...source, snippet };
+      // Empty or a repeat of something already shown: fetch the real thing
+      needsLookup.push(i);
+      return { ...source, snippet: '' };
     });
+
+    if (needsLookup.length > 0) {
+      // Hard ceiling on this whole phase. It runs after the Gemini call and the
+      // verification fetches, so a single slow publisher must never be able to
+      // push the function past its execution limit. Anything still in flight
+      // when the deadline hits just falls back to the generic line.
+      const BLANK = { description: '', title: '' };
+      const deadline = new Promise(resolve => {
+        const t = setTimeout(() => resolve(null), 5000);
+        if (typeof t.unref === 'function') t.unref();
+      });
+
+      const metas = await Promise.all(
+        needsLookup.map(i => Promise.race([
+          fetchPageMeta(verifiedSources[i].url).catch(() => BLANK),
+          deadline.then(() => BLANK)
+        ]))
+      );
+
+      needsLookup.forEach((sourceIndex, n) => {
+        const source = verifiedSources[sourceIndex];
+        const meta = metas[n] || {};
+        const candidate = toReadableSnippet(meta.description);
+        const key = candidate.toLowerCase();
+
+        if (candidate && !seenSnippets.has(key) && isInformativeDescription(candidate, source.url)) {
+          source.snippet = candidate;
+          seenSnippets.add(key);
+        } else {
+          // Nothing this source actually said that's worth showing. Leave it
+          // empty; the UI falls back to the domain. On a fact-checker, a blank
+          // line is more honest than text we wrote on the source's behalf.
+          source.snippet = '';
+        }
+
+        // While we have the page open, upgrade "jpost.com" to the real headline
+        if (looksLikeBareDomain(source.title) && meta.title) {
+          source.title = toReadableSnippet(meta.title, 110).replace(/\.$/, '');
+        }
+      });
+    }
 
     // Filter to only verified sources for display
     const displaySources = verifiedSources.filter(s => s.verified);
