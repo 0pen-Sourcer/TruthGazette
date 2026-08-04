@@ -175,6 +175,71 @@ try {
   }
 } catch (e) { /* Upstash not configured */ }
 
+// ============================================================================
+// SNIPPET SANITISATION
+// Grounding text reaches us in several shapes: real newlines, literal "\n"
+// two-character escapes that survived a JSON round-trip, markdown bullets and
+// mid-sentence fragments. Everything that ends up in a source card goes
+// through here first.
+// ============================================================================
+
+function cleanSnippetText(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw
+    // Literal escape sequences ("\n\nThe decision recognizes...")
+    .replace(/\\r\\n|\\n|\\r|\\t/g, ' ')
+    .replace(/\\"/g, '"')
+    .replace(/\\'/g, "'")
+    // Real control characters and exotic whitespace
+    .replace(/[\r\n\t\v\f\u00a0\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u3000\ufeff]+/g, ' ')
+    // Citation markers and markdown decoration
+    .replace(/\[\d+\]/g, ' ')
+    .replace(/[*_`#>]+/g, ' ')
+    // Leading list bullets
+    .replace(/^\s*[-•▪·–—]+\s*/, '')
+    .replace(/\s{2,}/g, ' ')
+    // Close the gap left where a removed citation marker sat before punctuation
+    .replace(/\s+([.,;:!?])/g, '$1')
+    .trim()
+    // Orphan punctuation left behind when a fragment was cut mid-sentence
+    .replace(/^[,;:.\-–—]+\s*/, '')
+    .trim();
+}
+
+function toReadableSnippet(raw, maxLen = 160) {
+  let s = cleanSnippetText(raw);
+  if (!s) return '';
+
+  if (s.length > maxLen) {
+    const window = s.slice(0, maxLen);
+    // Prefer cutting at a sentence boundary, otherwise at the last whole word
+    const sentenceEnd = Math.max(window.lastIndexOf('. '), window.lastIndexOf('? '), window.lastIndexOf('! '));
+    if (sentenceEnd > maxLen * 0.5) {
+      s = window.slice(0, sentenceEnd + 1);
+    } else {
+      const lastSpace = window.lastIndexOf(' ');
+      s = (lastSpace > 0 ? window.slice(0, lastSpace) : window).replace(/[,;:\-–—]+$/, '');
+      // Only mark it as truncated if the cut didn't happen to land on a
+      // complete sentence — otherwise we'd emit "…the figure.…".
+      if (!/[.!?]$/.test(s)) s += '…';
+    }
+  }
+
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  if (!/[.!?…"')\]]$/.test(s)) s += '.';
+  return s;
+}
+
+// Used when a source genuinely has no usable text. Describes the source's role
+// rather than inventing a quote it never made.
+function fallbackSnippet(title, url) {
+  let domain = '';
+  try { domain = new URL(url).hostname.replace(/^www\./, ''); } catch (e) { /* not a URL */ }
+  if (domain) return `Supporting coverage from ${domain} cited during verification of this claim.`;
+  if (title) return `${title} — referenced during verification of this claim.`;
+  return 'Referenced during verification of this claim.';
+}
+
 function checkLocalRateLimit(key, limit) {
   const now = Date.now();
   const state = LOCAL_STATE.get(key) || { timestamps: [] };
@@ -482,18 +547,38 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     // Prefer grounding chunks over model-generated sources
     let verifiedSources = [];
     
-    // Extract grounding support snippets if available
+    // Extract grounding support snippets if available.
+    // A single groundingSupport routinely cites several chunks at once, so
+    // mapping its segment text onto every one of those indices is what made
+    // sources 3-5 repeat the exact same sentence. Collect all candidates per
+    // chunk first, then hand out each distinct segment to only one chunk.
     const groundingSupports = groundingMeta?.groundingSupports || [];
-    const snippetMap = new Map();
+    const supportsByChunk = new Map();
     groundingSupports.forEach(support => {
-      if (support.segment?.text && support.groundingChunkIndices?.length > 0) {
-        support.groundingChunkIndices.forEach(idx => {
-          if (!snippetMap.has(idx)) {
-            snippetMap.set(idx, support.segment.text.replace(/\n/g, ' ').slice(0, 150));
-          }
-        });
-      }
+      const text = toReadableSnippet(support?.segment?.text);
+      if (!text || !support.groundingChunkIndices?.length) return;
+      support.groundingChunkIndices.forEach(idx => {
+        if (!supportsByChunk.has(idx)) supportsByChunk.set(idx, []);
+        supportsByChunk.get(idx).push(text);
+      });
     });
+
+    const snippetMap = new Map();
+    const claimedSegments = new Set();
+    Array.from(supportsByChunk.entries())
+      // Most-constrained chunks choose first, so a chunk with a single
+      // uniquely-cited segment never loses it to a chunk that has options.
+      .sort((a, b) => a[1].length - b[1].length)
+      .forEach(([idx, texts]) => {
+        const pick = texts
+          .slice()
+          .sort((a, b) => b.length - a.length) // longer segment = more specific
+          .find(t => !claimedSegments.has(t));
+        if (pick) {
+          snippetMap.set(idx, pick);
+          claimedSegments.add(pick);
+        }
+      });
     
     if (groundingMeta?.groundingChunks?.length > 0) {
       // Extract richer URLs and snippets from grounding chunks
@@ -552,15 +637,18 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
         const verified = !!(verification && verification.verified);
         const verifiedAt = verification?.verifiedAt || null;
 
-        // Try snippetMap first, then fall back to chunk's own web snippet, then title
-        const rawSnippet = snippetMap.get(idx) 
-          || chunk.web?.snippet 
-          || chunk.retrievedContext?.text?.replace(/\n/g, ' ').slice(0, 150)
-          || '';
+        // Grounding support segment first (most on-point), then the chunk's own
+        // web snippet, then raw retrieved page text as a last resort. Every
+        // branch is sanitised — raw retrievedContext in particular tends to
+        // arrive with leading "\n\n".
+        const snippet = toReadableSnippet(snippetMap.get(idx))
+          || toReadableSnippet(chunk.web?.snippet)
+          || toReadableSnippet(chunk.retrievedContext?.text);
+
         return {
           title,
           url: finalUrl,
-          snippet: rawSnippet,
+          snippet,
           verified,
           verifiedAt,
           fromGrounding: true
@@ -573,22 +661,45 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
       verifiedSources = verifiedFirst.concat(unverified).slice(0, 5);
     }
     
-    // If we got grounding sources but AI also provided sources with snippets, merge the snippets
+    // The model writes proper one-sentence summaries, so prefer those over raw
+    // grounding text. Matching is strictly one-to-one: the old code took the
+    // first domain match every time, so three sources from the same publisher
+    // all collapsed onto one card while the rest kept their raw text.
     if (verifiedSources.length > 0 && Array.isArray(result.sources)) {
-      result.sources.forEach(aiSource => {
-        if (aiSource?.snippet) {
-          // Find matching source by domain and add snippet if missing
-          const match = verifiedSources.find(vs => {
-            try {
-              const vsDomain = new URL(vs.url).hostname.replace('www.', '');
-              const aiDomain = new URL(aiSource.url).hostname.replace('www.', '');
-              return vsDomain === aiDomain;
-            } catch { return false; }
-          });
-          if (match && !match.snippet) {
-            match.snippet = aiSource.snippet;
-          }
+      const domainOf = (u) => {
+        try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return ''; }
+      };
+      const normTitle = (t) => (t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+      const pool = result.sources
+        .filter(s => s && toReadableSnippet(s.snippet))
+        .map(s => ({ ...s, snippet: toReadableSnippet(s.snippet) }));
+      const takenAi = new Set();
+
+      // Pass 1 matches on domain; pass 2 catches sources whose URL is still an
+      // unresolved vertexaisearch proxy by comparing titles instead.
+      const matchers = [
+        (vs, ai) => domainOf(vs.url) !== '' && domainOf(vs.url) === domainOf(ai.url),
+        (vs, ai) => {
+          const a = normTitle(vs.title), b = normTitle(ai.title);
+          return a.length > 3 && b.length > 3 && (a.includes(b) || b.includes(a));
         }
+      ];
+
+      matchers.forEach(matches => {
+        verifiedSources.forEach(vs => {
+          if (vs.aiSnippet) return;
+          const i = pool.findIndex((ai, n) => !takenAi.has(n) && matches(vs, ai));
+          if (i !== -1) {
+            takenAi.add(i);
+            vs.aiSnippet = pool[i].snippet;
+          }
+        });
+      });
+
+      verifiedSources.forEach(vs => {
+        if (vs.aiSnippet) vs.snippet = vs.aiSnippet;
+        delete vs.aiSnippet;
       });
     }
     
@@ -603,7 +714,7 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
           return {
             title: source.title || verification.title || 'Source',
             url: verification.archivedUrl || source.url,
-            snippet: source.snippet || '',
+            snippet: toReadableSnippet(source.snippet),
             verified: verification.verified,
             verifiedAt: verification.verifiedAt || null,
             status: verification.status,
@@ -614,6 +725,20 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
       
       verifiedSources = await Promise.all(verificationPromises);
     }
+
+    // Final guarantee: whichever branch produced the sources, every card that
+    // reaches the UI gets a clean, non-empty, non-duplicated snippet.
+    const seenSnippets = new Set();
+    verifiedSources = verifiedSources.map(source => {
+      let snippet = toReadableSnippet(source.snippet);
+      const key = snippet.toLowerCase();
+      if (!snippet || seenSnippets.has(key)) {
+        snippet = fallbackSnippet(source.title, source.url);
+      } else {
+        seenSnippets.add(key);
+      }
+      return { ...source, snippet };
+    });
 
     // Filter to only verified sources for display
     const displaySources = verifiedSources.filter(s => s.verified);

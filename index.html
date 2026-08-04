@@ -814,8 +814,19 @@
             let icon = verdict === 'FAKE' ? 'fas fa-times-circle' : verdict === 'REAL' ? 'fas fa-check-circle' : 'fas fa-question-circle';
             let bgColor = verdict === 'FAKE' ? '#c41e3a' : verdict === 'REAL' ? '#2d5016' : '#f4a500';
             
-            const keyFactorsHTML = result.keyFactors 
-                ? result.keyFactors.map(factor => `<li><i class="fas fa-caret-right"></i>${factor}</li>`).join('')
+            // Titles, snippets and key factors come from an external API, so
+            // escape them before they go anywhere near innerHTML.
+            const escapeHtml = (str) => String(str == null ? '' : str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+
+            // The red marker comes from `.key-factors li:before`, so no icon here
+            // — having both rendered a doubled arrow on every bullet.
+            const keyFactorsHTML = result.keyFactors
+                ? result.keyFactors.map(factor => `<li>${escapeHtml(factor)}</li>`).join('')
                 : '';
 
             // Meta and last-checked text
@@ -846,15 +857,14 @@
                         let domain = '';
                         try { domain = new URL(source.url).hostname.replace('www.', ''); } catch (e) {}
                         
-                        // Use snippet if available, otherwise show domain
-                        const descText = source.snippet 
-                            ? source.snippet.slice(0, 120) + (source.snippet.length > 120 ? '...' : '')
-                            : domain;
-                        
+                        // The API already returns a clean, sentence-complete snippet
+                        // capped at a readable length, so don't re-cut it mid-word here.
+                        const descText = source.snippet || domain;
+
                         return `<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">
                             <div class="source-left">
-                                <span class="source-title"><strong>[${counter}]</strong> ${source.title || domain}</span>
-                                <span class="source-desc" style="margin-top:4px; font-size:0.85em; color:#666;">${descText}</span>
+                                <span class="source-title"><strong>[${counter}]</strong> ${escapeHtml(source.title || domain)}</span>
+                                <span class="source-desc" style="margin-top:4px; font-size:0.85em; color:#666;">${escapeHtml(descText)}</span>
                             </div>
                             <i class="fas fa-external-link-alt"></i>
                         </a>`;
@@ -913,8 +923,7 @@
                         ${sourcesHTML}
 
                         <div style="margin-top: 25px; padding: 15px; background: #fafaf8; border: 1px solid #ddd; font-size: 0.9em; text-align: center;">
-                            <strong><i class="fas fa-balance-scale"></i> Editorial Note:</strong> This analysis was conducted by Truth Gazette's AI verification engine. Always cross-reference important information through multiple credible sources. 
-                            Always cross-reference important information with multiple credible sources.
+                            <strong><i class="fas fa-balance-scale"></i> Editorial Note:</strong> This analysis was conducted by Truth Gazette's AI verification engine. Always cross-reference important information through multiple credible sources.
                         </div>
                     </div>
                 </div>
