@@ -948,9 +948,10 @@
             resultArea.innerHTML = `
                 <div class="result-article">
                     <div class="result-headline" style="background: ${bgColor};">
-                        <!-- Single leading icon: the old trailing one wrapped onto
-                             its own line whenever a headline ran past two lines. -->
-                        <h2><i class="${icon}"></i> ${escapeHtml(result.headline || verdict + ' NEWS DETECTED')}</h2>
+                        <!-- Both icons kept for symmetry. The non-breaking space
+                             ties the trailing one to the last word so it can never
+                             wrap onto a line by itself on a long headline. -->
+                        <h2><i class="${icon}"></i> ${escapeHtml(result.headline || verdict + ' NEWS DETECTED')}&nbsp;<i class="${icon}"></i></h2>
                         <div class="verdict-badge ${verdictClass}">${verdict}</div>
                     </div>
                     
