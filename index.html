@@ -624,11 +624,46 @@
         const TG_SESSION = ensureSession();
 
         // Image preview functionality
+        // The API rejects anything over 15MB, and base64 inflates a file by
+        // roughly a third, so refuse early with a clear message instead of
+        // letting a phone photo fail deep in the request.
+        const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
         document.getElementById('imageInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             uploadedImageText = '';
             document.getElementById('ocrStatus').style.display = 'none';
             document.getElementById('ocrText').textContent = '';
+
+            // Selecting nothing (or cancelling the picker) should clear the
+            // previous image rather than leave a stale preview attached.
+            if (!file) {
+                uploadedImage = null;
+                document.getElementById('imagePreview').style.display = 'none';
+                window._ocrInProgress = false;
+                return;
+            }
+
+            if (file.size > MAX_IMAGE_BYTES) {
+                alert('That image is ' + (file.size / 1048576).toFixed(1) + 'MB. Please use one under 10MB, or take a screenshot of just the text.');
+                e.target.value = '';
+                uploadedImage = null;
+                document.getElementById('imagePreview').style.display = 'none';
+                return;
+            }
+
+            // iPhones hand over HEIC by default and neither Tesseract nor the
+            // browser can decode it, so say so plainly rather than showing a
+            // broken preview and an empty OCR result.
+            const readable = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'];
+            if (file.type && !readable.includes(file.type.toLowerCase())) {
+                alert('That image format (' + file.type + ') can\'t be read here. Please use JPG, PNG or WebP. On iPhone, take a screenshot instead of sharing the photo directly.');
+                e.target.value = '';
+                uploadedImage = null;
+                document.getElementById('imagePreview').style.display = 'none';
+                return;
+            }
+
             if (file) {
                 const reader = new FileReader();
                 reader.onload = function(e) {
@@ -696,7 +731,7 @@
 
         async function investigateNews() {
             const textInput = document.getElementById('newsInput').value.trim();
-            const urlInput = document.getElementById('urlInput').value.trim();
+            let urlInput = document.getElementById('urlInput').value.trim();
             const resultArea = document.getElementById('resultArea');
             const analyzeBtn = document.getElementById('analyzeBtn');
 
@@ -705,14 +740,30 @@
                 return;
             }
 
-            // Validate URL if provided
+            // Validate URL if provided.
+            // People type "bbc.com/news" far more often than they type the
+            // scheme, so add it rather than refusing the input. Only http(s)
+            // is accepted: new URL() alone happily parses javascript: and
+            // file: URLs, which have no business here.
             if (urlInput) {
+              const candidate = /^[a-z][a-z0-9+.-]*:/i.test(urlInput) ? urlInput : 'https://' + urlInput;
+              let parsed;
               try {
-                new URL(urlInput);
+                parsed = new URL(candidate);
               } catch (e) {
-                alert('Invalid URL format. Please check and try again.');
+                alert('That does not look like a valid web address. Try something like https://example.com/article');
                 return;
               }
+              if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                alert('Only http and https links can be investigated.');
+                return;
+              }
+              if (!parsed.hostname.includes('.')) {
+                alert('That web address is missing a domain. Try something like https://example.com/article');
+                return;
+              }
+              urlInput = parsed.href;
+              document.getElementById('urlInput').value = urlInput;
             }
 
             // If OCR is still running, prevent submission
@@ -897,7 +948,9 @@
             resultArea.innerHTML = `
                 <div class="result-article">
                     <div class="result-headline" style="background: ${bgColor};">
-                        <h2><i class="${icon}"></i> ${result.headline || verdict + ' NEWS DETECTED'} <i class="${icon}"></i></h2>
+                        <!-- Single leading icon: the old trailing one wrapped onto
+                             its own line whenever a headline ran past two lines. -->
+                        <h2><i class="${icon}"></i> ${escapeHtml(result.headline || verdict + ' NEWS DETECTED')}</h2>
                         <div class="verdict-badge ${verdictClass}">${verdict}</div>
                     </div>
                     

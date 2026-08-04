@@ -868,6 +868,10 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
       const key = snippet.toLowerCase();
       if (snippet && !seenSnippets.has(key)) {
         seenSnippets.add(key);
+        // Gemini often labels a chunk "esa.int" rather than the headline. Even
+        // with a usable snippet in hand it's worth opening the page for a
+        // proper title, so cards don't read as a list of bare domains.
+        if (looksLikeBareDomain(source.title)) needsLookup.push(i);
         return { ...source, snippet };
       }
       // Empty or a repeat of something already shown: fetch the real thing
@@ -899,14 +903,18 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
         const candidate = toReadableSnippet(meta.description);
         const key = candidate.toLowerCase();
 
-        if (candidate && !seenSnippets.has(key) && isInformativeDescription(candidate, source.url)) {
-          source.snippet = candidate;
-          seenSnippets.add(key);
-        } else {
-          // Nothing this source actually said that's worth showing. Leave it
-          // empty; the UI falls back to the domain. On a fact-checker, a blank
-          // line is more honest than text we wrote on the source's behalf.
-          source.snippet = '';
+        // Some entries are only here for a better title and already carry a
+        // good snippet; don't overwrite what they have.
+        if (!source.snippet) {
+          if (candidate && !seenSnippets.has(key) && isInformativeDescription(candidate, source.url)) {
+            source.snippet = candidate;
+            seenSnippets.add(key);
+          } else {
+            // Nothing this source actually said that's worth showing. Leave it
+            // empty; the UI falls back to the domain. On a fact-checker, a blank
+            // line is more honest than text we wrote on the source's behalf.
+            source.snippet = '';
+          }
         }
 
         // While we have the page open, upgrade "jpost.com" to the real headline
