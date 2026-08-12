@@ -19,8 +19,8 @@ The goal isn't to hand people a verdict and end the conversation. It's to show t
 ## What It Does
 
 - **Text**: Paste a claim, AI analyzes it against live Google Search results
-- **URL**: Drop a link, we fetch it, parse it, and verify the sources it cites
-- **Image**: Upload a screenshot, OCR extracts the text, we fact-check what's in it
+- **URL**: Drop a link, we fetch and read the page (when the site lets us), then check what it says against independent sources
+- **Image**: Upload a screenshot, OCR pulls out the text and the model looks at the picture too, so it can tell a news screenshot from a joke
 - **Output**: Verdict + confidence (65-95%) + why we think what we think + actual verified sources
 
 Every URL it cites gets fetched and validated. If a source is dead, we check the Wayback Machine. If an excerpt doesn't exist on the page, we flag it.
@@ -50,8 +50,8 @@ Quick demo tips:
 
 - **Frontend**: Plain HTML + JavaScript (no framework flex needed)
 - **Backend**: Node.js serverless function on Vercel
-- **AI**: Google Gemini 2.5-flash with Google Search grounding
-- **OCR**: Google Vision API (primary) + Tesseract.js (fallback)
+- **AI**: Google Gemini 3.5-flash with Google Search grounding
+- **OCR**: Tesseract.js in the browser. Gemini reads the picture itself when there is little text to extract.
 - **Rate Limiting**: Upstash Redis (prod) or in-memory Map (local)
 - **Source Verification**: Custom function that actually fetches URLs and checks the HTML
 
@@ -60,6 +60,7 @@ Quick demo tips:
 ```bash
 GEN_API_KEY=your-gemini-api-key
 GEN_MODEL=gemini-3.5-flash
+VISION_API_KEY=...          # optional, only if you have a Google Cloud Vision key
 UPSTASH_REDIS_REST_URL=...  # optional for production
 UPSTASH_REDIS_REST_TOKEN=...
 RATE_LIMIT_PER_MIN=20
@@ -83,10 +84,11 @@ Don't have Upstash? Cool, it'll just cache in memory locally.
 We'd rather list these than pretend they don't exist.
 
 - Web Archive snapshots are sometimes incomplete or outdated
+- Search grounding returns pages that are *related* to a claim without being *about* it, and the report can lean on them harder than it should. The sources are always real and always fetched, but "relevant" is a judgement we don't yet make well.
 - Date extraction from HTML uses regex, not NLP magic
 - English-only for now (see roadmap)
 - We block private IPs (no localhost scanning)
-- Max 10MB images (Google Vision gets cranky)
+- Max 10MB images
 - If the model is having a bad day and returns "no content", we retry once
 - A verdict is a starting point for checking, not a final ruling. The UI says so too.
 

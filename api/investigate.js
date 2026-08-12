@@ -210,6 +210,21 @@ function toReadableSnippet(raw, maxLen = 160) {
   let s = cleanSnippetText(raw);
   if (!s) return '';
 
+  // Strip stray quote marks left at either end by a cut-off fragment
+  s = s.replace(/^["'“”‘’]+/, '').replace(/["'“”‘’]+$/, '').trim();
+
+  // Something with no actual words in it is punctuation, not a snippet. A lone
+  // quote character was reaching source cards this way, because the
+  // terminal-punctuation test below counts `"` as a finished sentence.
+  if (!/[A-Za-zÀ-ɏऀ-ॿঀ-৿஀-௿]{2,}/.test(s)) return '';
+
+  // Grounding support segments are slices of the model's own answer, and that
+  // answer is JSON — so a segment starting at the top of the response arrives
+  // as raw structure ("Json { \"verdict\": \"REAL\"..."). Prose never looks
+  // like this, so reject rather than try to salvage it.
+  if (/^\s*(?:json\b\s*)?[{\[]/i.test(s)) return '';
+  if (/"(?:verdict|confidence|confidenceReason|headline|analysis|keyFactors|sources|tactic|snippet|title|url|name|explanation|spotItNext)"\s*:/i.test(s)) return '';
+
   if (s.length > maxLen) {
     const window = s.slice(0, maxLen);
     // Prefer cutting at a sentence boundary, otherwise at the last whole word
@@ -273,17 +288,26 @@ async function fetchPageMeta(url) {
 
     // The <head> is all we need; no reason to parse a megabyte of article body
     const html = (await response.text()).slice(0, 200000);
-    const pick = (re) => { const m = html.match(re); return m ? decodeEntities(m[1]).trim() : ''; };
+
+    // Headlines are full of apostrophes ("India's", "World's"), so an attribute
+    // pattern of [^"']* truncates them mid-word. Capture the opening quote and
+    // read up to the matching one instead, letting the other quote type through.
+    const pick = (re, group = 1) => {
+      const m = html.match(re);
+      return m ? decodeEntities(m[group]).trim() : '';
+    };
+    const attr = (nameRe) => new RegExp('<meta[^>]+' + nameRe + '[^>]*content=(["\'])([\\s\\S]*?)\\1', 'i');
+    const attrBefore = (nameRe) => new RegExp('<meta[^>]+content=(["\'])([\\s\\S]*?)\\1[^>]*' + nameRe, 'i');
 
     meta.description =
-      pick(/<meta[^>]+property=["']og:description["'][^>]*content=["']([^"']*)["']/i) ||
-      pick(/<meta[^>]+content=["']([^"']*)["'][^>]*property=["']og:description["']/i) ||
-      pick(/<meta[^>]+name=["']description["'][^>]*content=["']([^"']*)["']/i) ||
-      pick(/<meta[^>]+content=["']([^"']*)["'][^>]*name=["']description["']/i) ||
-      pick(/<meta[^>]+name=["']twitter:description["'][^>]*content=["']([^"']*)["']/i);
+      pick(attr('property=["\']og:description["\']'), 2) ||
+      pick(attrBefore('property=["\']og:description["\']'), 2) ||
+      pick(attr('name=["\']description["\']'), 2) ||
+      pick(attrBefore('name=["\']description["\']'), 2) ||
+      pick(attr('name=["\']twitter:description["\']'), 2);
 
     meta.title =
-      pick(/<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']*)["']/i) ||
+      pick(attr('property=["\']og:title["\']'), 2) ||
       pick(/<title[^>]*>([^<]+)<\/title>/i);
 
     // Plenty of pages ship no description meta at all (Wikipedia among them).
@@ -304,6 +328,55 @@ async function fetchPageMeta(url) {
   } catch (e) { /* unreachable or slow site: caller falls back */ }
 
   return meta;
+}
+
+// Read the actual article a reader submitted, rather than only handing its URL
+// to the model and hoping search finds it. The interface promises we fetch the
+// page, so we fetch the page.
+async function fetchArticleText(url, maxChars = 4000) {
+  const out = { title: '', text: '', fetched: false };
+  if (!url || !/^https?:\/\//i.test(url)) return out;
+
+  try {
+    const parsed = new URL(url);
+    if (isPrivateIP(parsed.hostname)) return out;
+
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TruthGazette/1.0; +https://truthgazette.vercel.app)' }
+      // Every site that lets us read it answers in well under half a second.
+      // Sites that block us either refuse immediately or hang, so a long
+      // timeout only ever buys dead waiting.
+    }, 4000);
+    if (!response.ok) return out;
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/html')) return out;
+
+    let html = (await response.text()).slice(0, 600000);
+
+    // Drop everything that isn't article copy before extracting
+    html = html
+      .replace(/<(script|style|noscript|svg|iframe|form)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<(nav|header|footer|aside)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    if (titleMatch) out.title = decodeEntities(titleMatch[1]).trim();
+
+    // Prefer the article body when the page marks one up
+    const body = (html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i) || [])[1] || html;
+
+    const paragraphs = (body.match(/<p\b[^>]*>[\s\S]*?<\/p>/gi) || [])
+      .map(p => decodeEntities(p.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim())
+      .filter(p => p.length >= 60);
+
+    out.text = paragraphs.join('\n\n').slice(0, maxChars);
+    out.fetched = out.text.length > 0;
+  } catch (e) {
+    // Paywalled, blocked, or slow. The model still has search to fall back on.
+  }
+
+  return out;
 }
 
 // Gemini often labels a chunk with a bare domain ("jpost.com") instead of the
@@ -367,6 +440,145 @@ function isInformativeDescription(text, url) {
   return true;
 }
 
+// ============================================================================
+// JSON RECOVERY
+// The model is asked for bare JSON and usually complies, but it sometimes
+// wraps it in a markdown fence, pads it with a sentence of prose, or runs out
+// of output budget mid-object. Any of those used to surface to the user as
+// "Unable to parse AI response", so we try hard to recover instead.
+// ============================================================================
+
+function extractJsonObject(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+
+  let text = raw.trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+    .trim();
+
+  const candidates = [text];
+
+  const start = text.indexOf('{');
+  if (start !== -1) {
+    // Walk the object tracking string state, so braces inside string values
+    // don't confuse the depth count.
+    const stack = [];
+    let inString = false, escaped = false, end = -1;
+
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (escaped) { escaped = false; continue; }
+      if (c === '\\') { escaped = true; continue; }
+      if (c === '"') { inString = !inString; continue; }
+      if (inString) continue;
+
+      if (c === '{' || c === '[') stack.push(c);
+      else if (c === '}' || c === ']') {
+        stack.pop();
+        if (stack.length === 0) { end = i; break; }
+      }
+    }
+
+    if (end !== -1) {
+      candidates.push(text.slice(start, end + 1));
+    } else {
+      // Truncated output: close whatever is still open and keep what we have.
+      let fragment = text.slice(start);
+      if (inString) fragment += '"';
+      fragment = fragment.replace(/[,\s]+$/, '');
+      while (stack.length) {
+        fragment += stack.pop() === '[' ? ']' : '}';
+      }
+      candidates.push(fragment);
+    }
+  }
+
+  for (const candidate of candidates) {
+    // Second variant drops trailing commas, which the model emits occasionally
+    for (const variant of [candidate, candidate.replace(/,(\s*[}\]])/g, '$1')]) {
+      try {
+        const parsed = JSON.parse(variant);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      } catch (e) { /* try the next shape */ }
+    }
+  }
+
+  return null;
+}
+
+// The model is told to return null when no genuine technique is present, but
+// "name a manipulation tactic" is exactly the kind of instruction a model will
+// satisfy by inventing something. Drop anything that isn't substantive.
+function sanitiseTactic(tactic) {
+  if (!tactic || typeof tactic !== 'object') return null;
+
+  const name = toReadableSnippet(tactic.name, 40).replace(/\.$/, '');
+  const explanation = toReadableSnippet(tactic.explanation, 180);
+  const spotItNext = toReadableSnippet(tactic.spotItNext, 180);
+
+  if (!name || !explanation) return null;
+
+  // Guard against the model filling the field with a shrug
+  const empty = /^(none|n\/?a|not applicable|no tactic|unknown|null)$/i;
+  if (empty.test(name.trim())) return null;
+
+  return { name, explanation, spotItNext };
+}
+
+// When a truncated response is repaired, JSON syntax can end up inside a string
+// value — a snippet that reads `" }, { "title": "...`. That is structure, not
+// prose, and it must never reach the page. Cut the value at the first artefact.
+const JSON_BLEED = /("?\s*\}\s*,\s*\{\s*")|(",\s*"(?:title|url|snippet|verdict|confidence|analysis|headline|keyFactors|sources|tactic|name|explanation|spotItNext)"\s*:)|("\s*\]\s*,?\s*"?)/;
+
+function stripJsonBleed(value) {
+  if (typeof value !== 'string') return '';
+  const match = value.match(JSON_BLEED);
+  let cleaned = match ? value.slice(0, match.index) : value;
+  // Trim structural leftovers from either end
+  cleaned = cleaned.replace(/^[\s"',:\[\]{}]+/, '').replace(/[\s"',:\[\]{}]+$/, '');
+  return cleaned.trim();
+}
+
+// A source is only worth printing if it still looks like a source after that.
+function isRenderableSource(source) {
+  if (!source || typeof source !== 'object') return false;
+  if (typeof source.url !== 'string' || !/^https?:\/\/\S+$/i.test(source.url)) return false;
+  // A title that survived cleaning to almost nothing means the entry was cut
+  const title = stripJsonBleed(source.title || '');
+  return title.length >= 3 || /^https?:\/\//i.test(source.url);
+}
+
+// Platforms where anyone can publish anything. They are often where a claim is
+// *spreading*, which makes them useful context for the model, but citing them
+// back to the reader as evidence would undercut the whole point of the tool.
+// A post is not a source. Filtered server-side so the count and the list agree.
+const NON_AUTHORITATIVE_HOSTS = [
+  'facebook.com', 'fb.com', 'fb.watch',
+  'instagram.com', 'threads.net',
+  'twitter.com', 'x.com', 't.co',
+  'tiktok.com',
+  'youtube.com', 'youtu.be',
+  'reddit.com', 'quora.com',
+  'pinterest.com', 'tumblr.com',
+  'medium.com', 'substack.com',
+  'blogspot.com', 'wordpress.com', 'wixsite.com',
+  'linkedin.com',
+  'telegram.org', 't.me', 'whatsapp.com',
+  'vertexaisearch'
+];
+
+function isAuthoritativeSource(url) {
+  let host = '';
+  try { host = new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch (e) { return false; }
+  // Grounding proxy links must never reach the reader, whatever shape they take
+  if (host.split('.').includes('vertexaisearch')) return false;
+
+  // Whole domains only. A substring test hides thequint.com, because
+  // "thequin(t.co)m" contains t.co — exactly the kind of silent over-blocking
+  // that quietly loses real sources.
+  return !NON_AUTHORITATIVE_HOSTS.some(bad => host === bad || host.endsWith('.' + bad));
+}
+
 function checkLocalRateLimit(key, limit) {
   const now = Date.now();
   const state = LOCAL_STATE.get(key) || { timestamps: [] };
@@ -411,13 +623,17 @@ module.exports = async (req, res) => {
     // Extract client info
     const ip = (req.headers['x-forwarded-for'] || req.connection?.remoteAddress || 'unknown').split(',')[0].trim();
     const sessionId = req.body?.sessionId || req.headers['x-session-id'] || 'anon';
+    // Note: the reader's guess is intentionally NOT accepted here. Telling the
+    // model what the user already believes biases the verdict it produces.
     const { text = '', url = '', image = null, ocrText = '' } = req.body || {};
 
     // ========================================================================
     // INPUT VALIDATION
     // ========================================================================
     
-    if (!text && !url && !image) {
+    // ocrText counts as input: the client no longer folds it into `text`, so an
+    // image-only submission arrives with text empty and the scan in ocrText.
+    if (!text && !url && !image && !ocrText) {
       return res.status(400).json({ error: 'Please provide text, URL, or an image to analyze' });
     }
     if (text && text.length > 5000) {
@@ -440,19 +656,19 @@ module.exports = async (req, res) => {
     if (useUpstash && rateLimit) {
       const rl = await rateLimit.limit(rateLimitKey);
       if (!rl.success) {
-        return res.status(429).json({ error: 'Rate limit exceeded. Try again in a minute.' });
+        return res.status(429).json({ error: 'Too many requests from this reader in one minute.', code: 'desk_busy' });
       }
     } else {
       const rl = checkLocalRateLimit(rateLimitKey, perMinLimit);
       if (!rl.success) {
-        return res.status(429).json({ error: 'Rate limit exceeded.', retry_after: rl.reset });
+        return res.status(429).json({ error: 'Too many requests from this reader in one minute.', code: 'desk_busy', retry_after: rl.reset });
       }
     }
 
     const dailyLimit = parseInt(process.env.DAILY_QUOTA || '200', 10);
     const quota = await checkDailyQuota(sessionId, dailyLimit);
     if (!quota.allowed) {
-      return res.status(429).json({ error: 'Daily quota exceeded. Come back tomorrow!' });
+      return res.status(429).json({ error: 'The day\'s allowance for this reader is used up.', code: 'day_done' });
     }
 
     // ========================================================================
@@ -476,7 +692,7 @@ module.exports = async (req, res) => {
     
     const API_KEY = process.env.GEN_API_KEY;
     if (!API_KEY) {
-      return res.status(500).json({ error: 'Server configuration error (missing API key)' });
+      return res.status(500).json({ error: 'The Gazette is not configured to run right now.', code: 'press_failure' });
     }
 
     // ========================================================================
@@ -484,8 +700,18 @@ module.exports = async (req, res) => {
     // ========================================================================
     
     let extractedOCR = ocrText || '';
-    
-    if (image && process.env.USE_SERVER_VISION !== '0') {
+
+    // The browser already ran OCR. Only spend a Vision call when what it got
+    // back is too thin to work with, rather than on every image out of habit.
+    const OCR_ENOUGH = 80;
+    const clientOcrIsThin = extractedOCR.replace(/\s+/g, ' ').trim().length < OCR_ENOUGH;
+
+    // Cloud Vision is a separate Google product from Gemini and needs its own
+    // key from a GCP project with the API enabled. A Gemini API key is rejected
+    // by it, so this stays off unless someone has genuinely configured one.
+    const VISION_KEY = process.env.VISION_API_KEY || '';
+
+    if (image && clientOcrIsThin && VISION_KEY && process.env.USE_SERVER_VISION !== '0') {
       try {
         const match = image.match(/^data:image\/[^;]+;base64,(.+)$/);
         if (match) {
@@ -500,7 +726,7 @@ module.exports = async (req, res) => {
           const timeout = setTimeout(() => controller.abort(), 12000);
           
           const visionRes = await fetch(
-            `https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`,
+            `https://vision.googleapis.com/v1/images:annotate?key=${VISION_KEY}`,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -525,7 +751,6 @@ module.exports = async (req, res) => {
     // BUILD THE PROMPT
     // ========================================================================
     
-    const combinedInput = [text, extractedOCR].filter(Boolean).join('\n\n').slice(0, 5000);
     
     // Current date for grounding
     const now = new Date();
@@ -533,7 +758,22 @@ module.exports = async (req, res) => {
     const currentYear = now.getFullYear();
     const currentMonth = now.toLocaleString('en-US', { month: 'long' });
     
-    const systemPrompt = `You are a rigorous fact-checker for "The Truth Gazette". Today is ${currentDate}.
+    const systemPrompt = `You are the editor of "The Truth Gazette", a small newspaper whose only beat is checking claims that are already circulating. Today is ${currentDate}.
+
+You are writing copy for the next edition, not filling in a form. Everything you
+produce is read by someone who arrived holding a claim they half-believe.
+
+=== HOUSE STYLE ===
+
+- Report. Do not lecture, coach, or congratulate.
+- Plain words over impressive ones. Short sentences. Active voice.
+- Never address the reader as "you". No "Always check", "Remember", "Be sure to".
+- Dry and understated. No exclamation marks, no hype, no scare quotes for effect.
+- Say what is known, say what is not known, and keep those two clearly apart.
+- Write for someone who received this on a phone from a relative, not for an
+  academic. Assume intelligence, assume no specialist vocabulary.
+- When the paper is unsure, print that it is unsure. An editor who hedges
+  everything is useless, and one who never hedges is worse.
 
 === ABSOLUTE RULES (NEVER VIOLATE) ===
 
@@ -573,10 +813,15 @@ Respond with ONLY valid JSON:
 {
   "verdict": "FAKE" | "REAL" | "UNCERTAIN",
   "confidence": <60-95>,
-  "confidenceReason": "<1 sentence explaining WHY you gave this confidence level>",
-  "headline": "<newspaper-style headline>",
-  "analysis": "<2-3 paragraphs with your reasoning>",
+  "confidenceReason": "<1 sentence, an editor's note on what the confidence rests on>",
+  "headline": "<a real newspaper headline for this finding: specific, active, no clickbait>",
+  "analysis": "<2-3 paragraphs of newspaper copy setting out what was found and what wasn't>",
   "keyFactors": ["<factor 1>", "<factor 2>", "<factor 3>"],
+  "tactic": {
+    "name": "<2-4 words naming the technique, e.g. 'False Authority', 'Missing Context', 'Outdated Photo', 'Fabricated Quote', 'Emotional Framing', 'Cherry-Picked Statistic'>",
+    "explanation": "<1-2 sentences of plain reporting on how the claim travelled and why it was persuasive>",
+    "spotItNext": "<1 short sentence stating what would have given it away, written as an observation, NOT as advice>"
+  },
   "sources": [
     {
       "title": "<source name/publication>",
@@ -586,16 +831,79 @@ Respond with ONLY valid JSON:
   ]
 }
 
+=== ABOUT "tactic" ===
+
+This runs as a short newspaper column headed "How It Spread". Write it the way
+a reporter would, not the way a textbook would.
+
+- Include it when the claim is FAKE or misleading, or when a REAL claim is
+  being circulated in a distorted way. Name the persuasion technique at work.
+- If the claim is straightforwardly true and circulated honestly, or you have
+  no evidence of any technique, set "tactic" to null. Do NOT invent one.
+- Describe the technique, never the person. No speculation about motives.
+- Report, do not instruct. Never address the reader as "you", and never open
+  with "Always", "Remember to", "Be sure to" or "Next time".
+  Write: "The message carried no date, and the photograph was four years old."
+  Not:   "Always check the date on photographs before sharing them."
+
 Remember: Your credibility depends on NEVER making up information. If you can't verify something, SAY SO.`;
 
+    // When a link is submitted, read the page before reasoning about it. The
+    // interface says we fetch the article, so this is what makes that true.
+    let article = { title: '', text: '', fetched: false };
+    if (url) {
+      article = await fetchArticleText(url);
+    }
+
     let userContent = '';
-    if (combinedInput) {
-      userContent += `CLAIM TO ANALYZE:\n"""${combinedInput}"""\n\n`;
+    // Whether the model needs to look at the picture, decided once and used
+    // both for what we tell it and for what we actually send.
+    const ocrCharCount = extractedOCR.replace(/\s+/g, ' ').trim().length;
+    const needsToSeeImage = !!image && ocrCharCount < OCR_ENOUGH;
+
+    // Typed text and text read off an image are not equally trustworthy, and
+    // merging them hides that. Label the OCR so the editor reads it for the
+    // claim rather than treating every character as written by someone.
+    const typedInput = (text || '').slice(0, 5000);
+    const imageInput = (extractedOCR || '').slice(0, 5000);
+
+    if (typedInput) {
+      userContent += `CLAIM TO ANALYZE:\n"""${typedInput}"""\n\n`;
+    }
+
+    if (imageInput) {
+      userContent += `TEXT READ FROM AN IMAGE (OCR):\n"""${imageInput}"""\n\n`;
+      userContent += `About that text: it was scanned out of a screenshot or photograph, so expect broken words, missing punctuation, wrong characters, and stray fragments of headlines, timestamps, watermarks or interface furniture mixed in. Work out what claim is actually being made and check that. Do not treat a transcription error as part of the claim, and do not quote the OCR text back verbatim.\n\n`;
+    }
+
+    if (needsToSeeImage) {
+      userContent += `THE IMAGE ITSELF IS ATTACHED. Look at it before deciding anything.
+
+- Establish what the image is and what, if anything, it asserts about the world. A screenshot of an article asserts what the article says. A photograph may assert that something happened. Some images assert nothing at all.
+- Check that assertion, not the fact that an image exists.
+- Where the picture shows something the text does not, or contradicts it, report what you can see.
+- If the image carries no checkable claim, return UNCERTAIN and say so plainly. Do not manufacture a claim in order to have something to rule on.
+- Note signs that an image is old, staged, edited or generated only where you can point to what you are seeing. Do not speculate.\n\n`;
     }
     if (url) {
       userContent += `PROVIDED URL: ${url}\n\n`;
+      if (article.fetched) {
+        userContent += `We fetched that page. Its title and opening text follow. Treat this as the claim under examination, NOT as evidence that it is true — a page saying something is not proof of it.\n`;
+        if (article.title) userContent += `PAGE TITLE: ${article.title}\n`;
+        userContent += `PAGE TEXT:\n"""${article.text}"""\n\n`;
+      } else {
+        userContent += `We could not read that page (it may be paywalled, blocked, or offline). Judge only what search can establish, and say plainly that the page itself could not be read.\n\n`;
+      }
     }
-    userContent += `TASK: Use Google Search to find evidence about this claim. 
+    // Someone can submit text, a link and a picture at once. Without this the
+    // task line says "this claim" while four labelled blocks sit above it, and
+    // the model quietly picks one.
+    const inputCount = [typedInput, imageInput || image, url].filter(Boolean).length;
+    if (inputCount > 1) {
+      userContent += `NOTE: more than one input was submitted together. Treat them as a single submission from one person, most likely different views of the same story. Identify the claim they have in common and check that. If they turn out to be about unrelated things, check the most substantial one and state in the report which parts you did not address.\n\n`;
+    }
+
+    userContent += `TASK: Use Google Search to find evidence about the claim above.
 - Search for the key entities, names, dates mentioned
 - Find official sources or major news coverage
 - Only cite what you actually find in search results
@@ -608,9 +916,22 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     const MODEL = process.env.GEN_MODEL || 'gemini-2.5-flash';
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
 
+    // Attach the picture only when the text pulled out of it isn't enough to
+    // work from. A screenshot of an article carries its claim in the words, so
+    // the image adds tokens and nothing else. An image with little or no text
+    // carries its claim in the picture, and without it there is nothing to go on.
+    const parts = [{ text: userContent }];
+
+    if (needsToSeeImage) {
+      const dataUrl = image.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+      if (dataUrl) {
+        parts.push({ inline_data: { mime_type: dataUrl[1], data: dataUrl[2] } });
+      }
+    }
+
     const requestBody = {
       contents: [{
-        parts: [{ text: userContent }]
+        parts
       }],
       systemInstruction: {
         parts: [{ text: systemPrompt }]
@@ -618,7 +939,11 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
       generationConfig: {
         temperature: 0.3,  // Lower temperature for more factual responses
         topK: 20,
-        topP: 0.8
+        topP: 0.8,
+        // 2.5-flash spends part of its budget on thinking, and a report with
+        // five sources runs long. Anything tighter than this truncates the JSON
+        // mid-object on busy claims.
+        maxOutputTokens: 8192
       },
       // ALWAYS enable Google Search - this is the key fix!
       tools: [{ google_search: {} }]
@@ -633,9 +958,27 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     const apiData = await apiResponse.json();
     
     if (!apiResponse.ok) {
-      console.error('Gemini API error:', apiData);
-      return res.status(500).json({ 
-        error: apiData.error?.message || 'AI service error. Please try again.' 
+      // Log the real thing, tell the reader something useful. Google's message
+      // talks about plans and billing consoles, which means nothing to someone
+      // who came here to check a claim.
+      console.error('Gemini API error:', apiResponse.status, apiData);
+
+      const upstream = (apiData.error?.message || '').toLowerCase();
+      const outOfQuota = apiResponse.status === 429
+        || upstream.includes('quota')
+        || upstream.includes('rate limit')
+        || upstream.includes('resource has been exhausted');
+
+      if (outOfQuota) {
+        return res.status(503).json({
+          error: 'The Gazette has filed as many reports as it can for now.',
+          code: 'editor_off_duty'
+        });
+      }
+
+      return res.status(502).json({
+        error: 'The verification desk could not be reached.',
+        code: 'press_failure'
       });
     }
 
@@ -643,28 +986,95 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     // PARSE RESPONSE
     // ========================================================================
     
-    const rawText = apiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const groundingMeta = apiData.candidates?.[0]?.groundingMetadata || null;
-    
-    // Extract JSON from response
-    let result;
-    try {
-      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-      result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-    } catch (e) {
-      result = null;
+    let rawText = apiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    let groundingMeta = apiData.candidates?.[0]?.groundingMetadata || null;
+    let finishReason = apiData.candidates?.[0]?.finishReason || '';
+
+    let result = extractJsonObject(rawText);
+
+    // One retry when the model returns nothing usable. This is rare, and a
+    // second attempt costs less than showing someone a broken report.
+    if (!result || !result.verdict) {
+      console.warn('[investigate] unparseable response, retrying once', {
+        finishReason,
+        length: rawText.length
+      });
+      try {
+        const retryResponse = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        });
+        if (retryResponse.ok) {
+          const retryData = await retryResponse.json();
+          const retryText = retryData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          const retryResult = extractJsonObject(retryText);
+          if (retryResult && retryResult.verdict) {
+            result = retryResult;
+            rawText = retryText;
+            groundingMeta = retryData.candidates?.[0]?.groundingMetadata || groundingMeta;
+            finishReason = retryData.candidates?.[0]?.finishReason || finishReason;
+          }
+        }
+      } catch (e) {
+        console.warn('[investigate] retry failed', e.message);
+      }
     }
 
-    // Fallback if JSON parsing fails
+    // Still nothing usable. Say so in plain language rather than leaking
+    // internals, and don't pretend a verdict we never reached.
     if (!result || !result.verdict) {
+      const ranOutOfRoom = finishReason === 'MAX_TOKENS';
       result = {
         verdict: 'UNCERTAIN',
         confidence: 60,
-        headline: 'Analysis Inconclusive',
-        analysis: rawText || 'Unable to analyze the provided content.',
-        keyFactors: ['Unable to parse AI response'],
+        headline: 'We Could Not Complete This Check',
+        confidenceReason: 'The verification did not finish, so this is not a judgement about the claim itself.',
+        analysis: ranOutOfRoom
+          ? 'The investigation was cut short before it finished. This says nothing about whether the claim is true or false. Please try again, or shorten the text you submitted.'
+          : 'Something went wrong while checking this claim, so we have no verdict to give you. This is not evidence for or against the claim. Please try again in a moment.',
+        keyFactors: [
+          'The check did not complete',
+          'No verdict has been reached either way',
+          'Try again, or rephrase the claim more briefly'
+        ],
         sources: []
       };
+    }
+
+    // Scrub any JSON structure that bled into text values during recovery, and
+    // drop source entries that were cut off mid-object. A half-parsed source is
+    // worse than no source on a tool that promises verified evidence.
+    result.headline = stripJsonBleed(result.headline) || result.headline;
+    result.analysis = stripJsonBleed(result.analysis) || result.analysis;
+    result.confidenceReason = stripJsonBleed(result.confidenceReason);
+
+    if (Array.isArray(result.keyFactors)) {
+      result.keyFactors = result.keyFactors
+        .map(stripJsonBleed)
+        .filter(f => f.length >= 3);
+    }
+
+    if (result.tactic && typeof result.tactic === 'object') {
+      result.tactic = {
+        name: stripJsonBleed(result.tactic.name),
+        explanation: stripJsonBleed(result.tactic.explanation),
+        spotItNext: stripJsonBleed(result.tactic.spotItNext)
+      };
+    }
+
+    if (Array.isArray(result.sources)) {
+      const before = result.sources.length;
+      result.sources = result.sources
+        .filter(isRenderableSource)
+        .map(s => ({
+          ...s,
+          title: stripJsonBleed(s.title),
+          snippet: stripJsonBleed(s.snippet)
+        }));
+      if (result.sources.length !== before) {
+        console.warn(`[investigate] dropped ${before - result.sources.length} malformed source(s)`);
+      }
     }
 
     // ========================================================================
@@ -925,8 +1335,16 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     }
 
     // Filter to only verified sources for display
-    const displaySources = verifiedSources.filter(s => s.verified);
+    // A source must be both reachable and worth citing. Social and user-post
+    // platforms are where claims spread, not where they are established, so
+    // they never appear in the public list even when they resolve fine.
+    const displaySources = verifiedSources.filter(s => s.verified && isAuthoritativeSource(s.url));
+    const suppressedCount = verifiedSources.filter(s => s.verified && !isAuthoritativeSource(s.url)).length;
     const unverifiedCount = verifiedSources.filter(s => !s.verified).length;
+
+    if (suppressedCount > 0) {
+      console.log(`[investigate] withheld ${suppressedCount} non-authoritative source(s) from the public list`);
+    }
 
     // ========================================================================
     // COMPUTE CONFIDENCE
@@ -962,10 +1380,16 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
       headline: result.headline,
       analysis: result.analysis,
       keyFactors: result.keyFactors || [],
+      // Named manipulation technique, when there is a genuine one. Inoculation
+      // research finds that resistance transfers through recognising the
+      // technique, not through learning that one particular claim was false.
+      tactic: sanitiseTactic(result.tactic),
       sources: displaySources,
       _meta: {
         verifiedSourceCount: displaySources.length,
         unverifiedSourceCount: unverifiedCount,
+        // Reachable, but a user-post platform rather than a citable source
+        withheldSourceCount: suppressedCount,
         hadGrounding: groundingMeta?.groundingChunks?.length > 0,
         searchUsed: !!groundingMeta?.searchEntryPoint || !!groundingMeta?.groundingChunks?.length,
         analysisDate: currentDate,
@@ -993,6 +1417,8 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
 
   } catch (err) {
     console.error('Investigate error:', err);
-    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    return res.status(500).json({ error: 'The edition did not make it to press.', code: 'press_failure' });
   }
 };
+
+

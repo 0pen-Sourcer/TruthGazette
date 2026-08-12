@@ -7,3 +7,5 @@ node_modules/
 *.pptx
 *.docx
 *.logcat
+.vercel
+.env*

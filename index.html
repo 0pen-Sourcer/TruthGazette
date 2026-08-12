@@ -5,14 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Truth Gazette - Fake News Detector</title>
     <meta name="google-site-verification" content="mAv1xaaNnmstsYik-xHwprvjA-j5WBKwV2ybUcMLepw" />
-    <meta name="description" content="AI-powered fake news detector. Verify articles, headlines, images, and URLs instantly using advanced AI analysis. Built by Ishant.">
-    <meta name="keywords" content="fake news detector, fact checker AI, news verification, AI journalism, misinformation checker">
-    <meta name="author" content="Ishant">
+    <meta name="description" content="A media and information literacy tool that checks claims from text, links or screenshots, and never shows a source it hasn't fetched and verified.">
+    <meta name="keywords" content="media and information literacy, fact checker, news verification, misinformation, source verification, MIL">
     
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Libre+Baskerville:wght@400;700&family=Special+Elite&display=swap" rel="stylesheet">
     <!-- Favicon -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="shortcut icon" href="/favicon.svg">
+    <!-- Installable on a phone: most of our readers are on Android, and the
+         claims they check arrive there. Installing is optional, never required. -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#1a1a1a">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Truth Gazette">
     <!-- Tesseract.js for client-side OCR -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2/dist/tesseract.min.js"></script>
     <!-- Vercel Web Analytics -->
@@ -188,6 +195,23 @@
             display: block;
         }
 
+        .remove-image {
+            display: block;
+            width: 100%;
+            background: #1a1a1a;
+            color: #d4c5a9;
+            border: none;
+            border-top: 1px solid #4a4a4a;
+            font-family: 'Special Elite', cursive;
+            font-size: 0.75em;
+            letter-spacing: 1px;
+            padding: 8px;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        .remove-image:hover { color: #fff; background: #c41e3a; }
+
         .analyze-section {
             text-align: center;
             margin: 40px 0;
@@ -217,6 +241,170 @@
             box-shadow: 0 2px 0 #8b1528;
         }
 
+        /* Reader's ballot. Styled as a newspaper poll clipping rather than a
+           modal, so it belongs to the page instead of interrupting it. */
+        .guess-panel {
+            margin: 25px 0;
+            background: #fffef8;
+            border: 3px double #1a1a1a;
+            padding: 28px 20px 22px;
+            text-align: center;
+            position: relative;
+            animation: guessDrop 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+        }
+
+        @keyframes guessDrop {
+            from { opacity: 0; transform: translateY(-14px) rotate(-0.4deg); }
+            to   { opacity: 1; transform: translateY(0) rotate(0); }
+        }
+
+        .guess-panel .ballot-tag {
+            position: absolute;
+            top: -11px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #c41e3a;
+            color: #fff;
+            font-family: 'Special Elite', cursive;
+            font-size: 0.7em;
+            letter-spacing: 3px;
+            padding: 3px 16px;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .guess-panel h3 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.6em;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 6px;
+        }
+
+        .guess-panel .ballot-sub {
+            font-size: 0.9em;
+            color: #555;
+            font-style: italic;
+            margin-bottom: 22px;
+        }
+
+        .guess-options {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
+
+        .guess-btn {
+            font-family: 'Playfair Display', serif;
+            font-size: 1em;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            padding: 13px 30px;
+            background: #fff;
+            border: 2px solid #1a1a1a;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-shadow: 3px 3px 0 #1a1a1a;
+        }
+
+        .guess-btn:hover {
+            transform: translate(2px, 2px);
+            box-shadow: 1px 1px 0 #1a1a1a;
+        }
+
+        .guess-btn.real:hover   { background: #2d5016; color: #fff; border-color: #2d5016; box-shadow: 1px 1px 0 #1b3009; }
+        .guess-btn.fake:hover   { background: #c41e3a; color: #fff; border-color: #8b1528; box-shadow: 1px 1px 0 #8b1528; }
+        .guess-btn.unsure:hover { background: #f4a500; color: #1a1a1a; border-color: #b87c00; box-shadow: 1px 1px 0 #b87c00; }
+
+        /* Sits with the three choices as a real fourth option. The previous
+           version was a grey underline nobody found, including people who knew
+           it was there. */
+        .guess-skip {
+            font-family: 'Special Elite', cursive;
+            font-size: 0.78em;
+            letter-spacing: 1px;
+            color: #666;
+            background: none;
+            border: 1px dashed #b9ae95;
+            padding: 9px 20px;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        .guess-skip:hover {
+            color: #1a1a1a;
+            border-color: #1a1a1a;
+            background: #f4f1e8;
+        }
+
+        .guess-footnote {
+            font-size: 0.75em;
+            color: #777;
+            border-top: 1px solid #ddd;
+            padding-top: 12px;
+            margin-bottom: 8px;
+        }
+
+        /* Verdict comparison strip shown above the result once a guess was made */
+        /* Reader poll result. A tally line, not a score screen. */
+        .guess-outcome {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            flex-wrap: wrap;
+            padding: 10px 20px;
+            font-family: 'Special Elite', cursive;
+            font-size: 0.78em;
+            letter-spacing: 1px;
+            color: #555;
+            background: #fafaf8;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .guess-outcome .tally { margin-left: auto; white-space: nowrap; color: #888; }
+
+        /* "How it spread" — a standing column, set like one. The transferable
+           part of any debunk is the method, so it gets its own furniture. */
+        .tactic-card {
+            margin: 28px 0 0;
+            border-top: 3px double #1a1a1a;
+            border-bottom: 3px double #1a1a1a;
+            padding: 16px 0 14px;
+        }
+
+        .tactic-card .tactic-label {
+            font-family: 'Special Elite', cursive;
+            font-size: 0.7em;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            color: #c41e3a;
+            margin-bottom: 8px;
+        }
+
+        .tactic-card h4 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.3em;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .tactic-card p { font-size: 0.93em; margin-bottom: 8px; }
+
+        .tactic-card .spot-it {
+            font-size: 0.9em;
+            font-style: italic;
+            color: #555;
+        }
+
+        @media (max-width: 600px) {
+            .guess-options { flex-direction: column; }
+            .guess-btn { width: 100%; }
+        }
+
         .analyze-btn:disabled {
             background: #666;
             border-color: #444;
@@ -227,29 +415,99 @@
         /* Touch & mobile friendliness */
         .analyze-btn, .clear-btn { touch-action: manipulation; }
 
+        /* Most readers arrive on a phone, so the phone layout is the one that
+           has to be tight. The desktop proportions left cards mostly empty and
+           pushed the button below the fold. */
         @media (max-width: 600px) {
-            .analyze-section { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
-            .analyze-btn, .clear-btn { width: 100%; box-sizing: border-box; }
-            .masthead { font-size: 2rem; }
-            .newspaper-wrapper { padding: 10px; }
-            textarea, input[type="text"] { font-size: 1rem; }
+            body { padding: 8px; }
+
+            .newspaper-header { padding: 18px 14px; }
+            .masthead {
+                font-size: 1.9rem;
+                letter-spacing: 1px;
+                padding: 10px 0;
+                margin-bottom: 2px;
+            }
+            .subheader { font-size: 0.72em; letter-spacing: 1px; margin-top: 6px; }
+            .date-line { font-size: 0.66em; margin-top: 8px; }
+
+            .newspaper-content { padding: 18px 14px; }
+
+            .section-title {
+                font-size: 1.3em;
+                letter-spacing: 1px;
+                padding-bottom: 8px;
+                margin-bottom: 16px;
+            }
+
+            .input-methods { gap: 14px; margin-bottom: 20px; }
+            .input-card { padding: 14px; }
+            .input-card:hover { transform: none; box-shadow: none; }
+            .input-card h3 { font-size: 1.05em; margin-bottom: 10px; padding-bottom: 6px; }
+            .input-card label { font-size: 0.85em; margin-bottom: 6px; }
+            .input-card small { font-size: 0.78em; }
+
+            textarea, input[type="text"] { font-size: 0.95em; padding: 10px; }
+            textarea { min-height: 90px; }
+
+            .file-upload-label { padding: 12px 10px; font-size: 0.9em; }
+
+            .analyze-section {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                align-items: stretch;
+                margin: 22px 0;
+                padding: 16px 14px;
+            }
+            .analyze-btn { width: 100%; box-sizing: border-box; margin-left: 0; }
+            /* Keep "INVESTIGATE NOW" on one line */
+            .analyze-btn {
+                font-size: 1.05em;
+                letter-spacing: 1px;
+                padding: 15px 12px;
+            }
+            /* Clear All destroys work and has no undo, so it must not sit at the
+               same weight as the primary action, nor be the easier thumb target. */
+            .clear-btn {
+                width: auto;
+                align-self: center;
+                background: none;
+                border: none;
+                color: #b9ae95;
+                font-size: 0.82em;
+                letter-spacing: 1px;
+                padding: 6px 10px;
+                text-decoration: underline;
+                margin-left: 0;
+            }
+            .clear-btn:hover { background: none; color: #f4f1e8; }
+
+            .house-notice { font-size: 0.66em; margin-top: 12px; }
+
+            .result-headline { padding: 18px 14px; }
+            .result-headline h2 { font-size: 1.25em; letter-spacing: 0; }
+            .result-body { padding: 16px 14px; }
         }
 
+        /* Clearing everything is destructive and cannot be undone, so it is set
+           as a quiet secondary action rather than a solid button sitting at the
+           same weight as INVESTIGATE NOW. */
         .clear-btn {
-            margin-left: 15px;
+            margin-left: 22px;
             font-family: 'Libre Baskerville', serif;
-            font-size: 1em;
-            padding: 15px 30px;
-            background: #fff;
-            color: #1a1a1a;
-            border: 2px solid #1a1a1a;
+            font-size: 0.85em;
+            padding: 10px 16px;
+            background: none;
+            color: #b9ae95;
+            border: 1px solid #4a4a4a;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
         }
 
         .clear-btn:hover {
-            background: #1a1a1a;
-            color: #fff;
+            color: #f4f1e8;
+            border-color: #d4c5a9;
         }
 
         .loading {
@@ -276,6 +534,18 @@
             font-family: 'Special Elite', cursive;
             font-size: 1.1em;
             margin-top: 15px;
+            min-height: 1.4em;
+        }
+
+        .loading-note {
+            font-family: 'Libre Baskerville', serif;
+            font-size: 0.82em;
+            color: #777;
+            margin-top: 14px;
+            max-width: 460px;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.5;
         }
 
         .result-article {
@@ -283,6 +553,22 @@
             border: 4px double #1a1a1a;
             padding: 0;
             background: #fff;
+            /* The edition lands on the desk: drops in, overshoots slightly,
+               settles a hair off-square like a page thrown down. */
+            animation: slamDown 0.45s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+            box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+        }
+
+        @keyframes slamDown {
+            0%   { opacity: 0; transform: translateY(-42px) scale(1.03) rotate(1.2deg); }
+            60%  { opacity: 1; transform: translateY(4px) scale(0.995) rotate(-0.5deg); }
+            100% { opacity: 1; transform: translateY(0) scale(1) rotate(-0.25deg); }
+        }
+
+        /* Anyone who prefers less motion gets the page without the theatre. */
+        @media (prefers-reduced-motion: reduce) {
+            .result-article { animation: none; transform: none; }
+            .guess-panel { animation: none; }
         }
 
         .result-headline {
@@ -458,6 +744,17 @@
             margin-bottom: 4px;
         }
 
+        /* Publisher line, set like a dateline. Who ran it is half the judgement. */
+        .source-domain {
+            font-family: 'Special Elite', cursive;
+            font-size: 0.72em;
+            letter-spacing: 1px;
+            color: #8a7a5a;
+            text-transform: lowercase;
+            display: block;
+            margin-bottom: 2px;
+        }
+
         .source-desc {
             font-size: 0.9em;
             color: #555;
@@ -496,6 +793,165 @@
 
         body.lights-out #flashlightOverlay { display: block; }
         body.lights-out { cursor: none; }
+
+        /* A notice, not a crash. Set like the box a paper runs when it has to
+           tell readers something about itself rather than about the news. */
+        .notice-edition { background: #fffef8; }
+
+        .notice-plate {
+            background: #1a1a1a;
+            color: #f4f1e8;
+            padding: 26px 24px 22px;
+            text-align: center;
+            border-bottom: 3px double #d4c5a9;
+        }
+
+        .notice-kicker {
+            font-family: 'Special Elite', cursive;
+            font-size: 0.7em;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            color: #d4c5a9;
+            margin-bottom: 8px;
+        }
+
+        .notice-plate h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.9em;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            line-height: 1.15;
+        }
+
+        .notice-body {
+            padding: 26px 30px 30px;
+            max-width: 620px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .notice-body p { font-size: 0.98em; line-height: 1.7; }
+
+        .notice-body .notice-footer {
+            margin-top: 16px;
+            padding-top: 14px;
+            border-top: 1px solid #e0d8c4;
+            font-size: 0.84em;
+            color: #777;
+            font-style: italic;
+        }
+
+        @media (max-width: 600px) {
+            .notice-plate h2 { font-size: 1.45em; }
+            .notice-body { padding: 20px 18px 24px; }
+        }
+
+        /* Drop-to-paste-up. Reads as a compositor's board: the page dims to
+           newsprint, and a ruled box waits for the clipping. */
+        #dropVeil {
+            position: fixed;
+            inset: 0;
+            display: none;
+            z-index: 9500;
+            background: rgba(26, 26, 26, 0.72);
+            backdrop-filter: blur(2px);
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        body.dragging-file #dropVeil { display: flex; }
+
+        .drop-plate {
+            background: #f4f1e8;
+            border: 3px double #1a1a1a;
+            padding: 42px 52px;
+            text-align: center;
+            max-width: 460px;
+            width: 100%;
+            box-shadow: 0 18px 44px rgba(0,0,0,0.45);
+            /* Lands once and stays put. Something that keeps moving while you
+               hold a file is just noise. */
+            animation: plateLand 0.22s cubic-bezier(0.2, 0.8, 0.3, 1.2);
+            transform: rotate(-0.5deg);
+        }
+
+        @keyframes plateLand {
+            from { opacity: 0; transform: rotate(-2.5deg) scale(0.94); }
+            to   { opacity: 1; transform: rotate(-0.5deg) scale(1); }
+        }
+
+        .drop-plate .plate-rule {
+            font-family: 'Special Elite', cursive;
+            font-size: 0.7em;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            color: #c41e3a;
+            margin-bottom: 12px;
+        }
+
+        .drop-plate h3 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.9em;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            line-height: 1.15;
+            margin-bottom: 10px;
+        }
+
+        .drop-plate p {
+            font-size: 0.88em;
+            color: #555;
+            font-style: italic;
+        }
+
+        .drop-plate .plate-mark {
+            font-size: 2.6em;
+            color: #c41e3a;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        /* The image card itself highlights when a file is over the window, so
+           it's obvious where the clipping is going even before you reach it. */
+        body.dragging-file .input-card.drop-target {
+            border-color: #c41e3a;
+            background: #fffdf5;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .drop-plate { animation: none; transform: none; }
+        }
+
+        /* Standing house notice, printed where a paper states its own policy.
+           Not a settings panel and not an easter egg: visible if you read the
+           page, invisible if you don't. */
+        .house-notice {
+            text-align: center;
+            font-family: 'Special Elite', cursive;
+            font-size: 0.72em;
+            letter-spacing: 1px;
+            color: #8a7a5a;
+            border-top: 1px solid #e0d8c4;
+            padding-top: 10px;
+            margin-top: 18px;
+        }
+
+        .notice-link {
+            background: none;
+            border: none;
+            padding: 0;
+            font-family: inherit;
+            font-size: inherit;
+            letter-spacing: inherit;
+            color: #c41e3a;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .notice-link:hover { color: #8b1528; }
 
         .flashlight-hint {
             position: fixed;
@@ -540,6 +996,16 @@
     </style>
 </head>
 <body>
+    <!-- Shown only while a file is being dragged over the window -->
+    <div id="dropVeil" aria-hidden="true">
+        <div class="drop-plate">
+            <span class="plate-mark"><i class="fas fa-paperclip"></i></span>
+            <div class="plate-rule">Late Edition</div>
+            <h3>Drop the Clipping</h3>
+            <p>Screenshots, forwards and photographs. We'll read the text out of it.</p>
+        </div>
+    </div>
+
     <div class="newspaper-wrapper">
         <div class="newspaper-header">
             <div class="masthead"> THE TRUTH GAZETTE</div>
@@ -568,10 +1034,10 @@
                     <h3><i class="fas fa-link"></i> URL Investigation</h3>
                     <label>Enter News Article URL:</label>
                     <input type="text" id="urlInput" placeholder="https://example.com/news-article">
-                    <small style="display: block; margin-top: 8px; color: #666;">We'll fetch and analyze the article content with relevant sources</small>
+                    <small style="display: block; margin-top: 8px; color: #666;">We read the page, then check what it says against independent sources</small>
                 </div>
 
-                <div class="input-card">
+                <div class="input-card drop-target">
                     <h3><i class="fas fa-camera"></i> Image Verification</h3>
                     <label>Upload or Capture Image:</label>
                     <div class="file-upload-wrapper">
@@ -582,6 +1048,11 @@
                     </div>
                     <div class="image-preview" id="imagePreview">
                         <img id="previewImg" src="" alt="Preview">
+                        <!-- Removing one input used to mean clearing all of them,
+                             so images got left attached to unrelated checks. -->
+                        <button type="button" class="remove-image" onclick="removeImage()" aria-label="Remove this image">
+                            <i class="fas fa-times"></i> Remove image
+                        </button>
                         <div id="ocrStatus" style="margin-top:8px;font-size:0.9em;color:#666;display:none">OCR: <span id="ocrText" style="font-weight:600"></span></div>
                     </div>
                     <small style="display: block; margin-top: 8px; color: #666;">AI will analyze text in images and verify claims</small>
@@ -589,10 +1060,33 @@
             </div>
 
             <div class="analyze-section">
-                <button class="analyze-btn" id="analyzeBtn" onclick="investigateNews()">
-                    <i class="fas fa-search"></i> INVESTIGATE NOW <i class="fas fa-search"></i>
+                <button class="analyze-btn" id="analyzeBtn" onclick="showGuessFirst()">
+                    <!-- The label is kept unbreakable so the flanking icons can
+                         never orphan onto their own line on a narrow screen. -->
+                    <span style="white-space: nowrap;"><i class="fas fa-search"></i>&nbsp;INVESTIGATE NOW&nbsp;<i class="fas fa-search"></i></span>
                 </button>
                 <button class="clear-btn" onclick="clearAll()"><i class="fas fa-trash"></i> Clear All</button>
+            </div>
+
+            <!-- House notice. A paper states its own policy in small type; this
+                 one happens to be adjustable. -->
+            <p class="house-notice" id="ballotNotice"></p>
+
+            <!-- Reader's ballot: the guess is taken before any evidence is shown,
+                 and never leaves the browser. -->
+            <div id="guessPanel" class="guess-panel" style="display:none;">
+                <span class="ballot-tag">Reader's Verdict</span>
+                <h3>Before We Investigate</h3>
+                <p class="ballot-sub">What does your gut say? Commit to a verdict, then we go and check.</p>
+                <div class="guess-options">
+                    <button class="guess-btn real" onclick="submitGuess('REAL')">Real</button>
+                    <button class="guess-btn fake" onclick="submitGuess('FAKE')">Fake</button>
+                    <button class="guess-btn unsure" onclick="submitGuess('UNCERTAIN')">Not Sure</button>
+                </div>
+                <p class="guess-footnote">Your answer stays in your browser. We never send it to the AI, so it can't sway the verdict.</p>
+                <!-- Guessing first is the point, but someone checking a forwarded
+                     message in a hurry shouldn't be forced through it. -->
+                <button class="guess-skip" onclick="submitGuess(null)">Skip and just investigate</button>
             </div>
 
             <div id="resultArea"></div>
@@ -600,8 +1094,8 @@
 
         <div class="footer">
             <p><strong><i class="fas fa-balance-scale"></i> THE TRUTH GAZETTE - FAKE NEWS DETECTION BUREAU <i class="fas fa-balance-scale"></i></strong></p>
-            <p>An AI-Powered Media Literacy Platform by Ishant</p>
-            <p style="margin-top: 15px; font-size: 0.8em;">Disclaimer: This AI tool provides analysis to assist in fact-checking. Always verify important information through multiple credible sources.</p>
+            <p>An AI-Powered Media Literacy Platform</p>
+            <p style="margin-top: 15px; font-size: 0.8em;">Every source printed here was requested and confirmed before publication. Anything we could not reach was left out rather than listed. A verdict is where checking starts.</p>
         </div>
     </div>
 
@@ -629,101 +1123,366 @@
         // letting a phone photo fail deep in the request.
         const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-        document.getElementById('imageInput').addEventListener('change', function(e) {
-            const file = e.target.files[0];
+        // One path for every way an image can arrive: the file picker, a drag
+        // from the desktop, or a share from another app on Android.
+        // Drop just the picture, leaving whatever is typed alone.
+        function removeImage() {
+            const input = document.getElementById('imageInput');
+            try { input.value = null; } catch (e) { input.value = ''; }
+            const preview = document.getElementById('previewImg');
+            if (preview) preview.src = '';
+            clearImage();
+        }
+
+        function clearImage() {
+            uploadedImage = null;
+            uploadedImageText = '';
+            window._ocrInProgress = false;
+            const preview = document.getElementById('imagePreview');
+            if (preview) preview.style.display = 'none';
+            const status = document.getElementById('ocrStatus');
+            if (status) status.style.display = 'none';
+            const text = document.getElementById('ocrText');
+            if (text) text.textContent = '';
+        }
+
+        const READABLE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'];
+
+        // OCR reads logos, icons and page furniture as character soup
+        // ("v p ' T ¢ 3 7 \ y g 4 4 w/ > @"). That soup gets sent to the model
+        // as part of the claim, so strip it before it goes anywhere.
+        function cleanOcrText(raw) {
+            if (typeof raw !== 'string' || !raw.trim()) return '';
+
+            const lines = raw.split(/\r?\n/).map(line => {
+                const tokens = line.trim().split(/\s+/).filter(Boolean);
+                if (!tokens.length) return '';
+
+                // A token counts as real if it holds a word, or is a plain number
+                const isWord = (t) => /[A-Za-zÀ-ɏऀ-ॿ]{2,}/.test(t) || /^\d[\d,.\-\/:]*$/.test(t);
+                const words = tokens.filter(isWord);
+
+                // Mostly-not-words means furniture, not copy
+                if (words.length < 2 || words.length < tokens.length * 0.4) return '';
+
+                // Drop a leading run of stray characters before the real text starts
+                let start = 0;
+                while (start < tokens.length && !isWord(tokens[start])) start++;
+                return tokens.slice(start).join(' ');
+            }).filter(Boolean);
+
+            return lines.join('\n').replace(/[ \t]{2,}/g, ' ').trim();
+        }
+
+        function handleImageFile(file) {
             uploadedImageText = '';
             document.getElementById('ocrStatus').style.display = 'none';
             document.getElementById('ocrText').textContent = '';
 
-            // Selecting nothing (or cancelling the picker) should clear the
-            // previous image rather than leave a stale preview attached.
-            if (!file) {
-                uploadedImage = null;
-                document.getElementById('imagePreview').style.display = 'none';
-                window._ocrInProgress = false;
-                return;
-            }
+            if (!file) { clearImage(); return false; }
 
             if (file.size > MAX_IMAGE_BYTES) {
                 alert('That image is ' + (file.size / 1048576).toFixed(1) + 'MB. Please use one under 10MB, or take a screenshot of just the text.');
-                e.target.value = '';
-                uploadedImage = null;
-                document.getElementById('imagePreview').style.display = 'none';
-                return;
+                clearImage();
+                return false;
             }
 
             // iPhones hand over HEIC by default and neither Tesseract nor the
             // browser can decode it, so say so plainly rather than showing a
             // broken preview and an empty OCR result.
-            const readable = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'];
-            if (file.type && !readable.includes(file.type.toLowerCase())) {
+            if (file.type && !READABLE_IMAGE_TYPES.includes(file.type.toLowerCase())) {
                 alert('That image format (' + file.type + ') can\'t be read here. Please use JPG, PNG or WebP. On iPhone, take a screenshot instead of sharing the photo directly.');
-                e.target.value = '';
-                uploadedImage = null;
-                document.getElementById('imagePreview').style.display = 'none';
+                clearImage();
+                return false;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                uploadedImage = ev.target.result;
+                document.getElementById('previewImg').src = uploadedImage;
+                document.getElementById('imagePreview').style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+
+            // Run OCR in browser via Tesseract.js (best-effort)
+            try {
+                document.getElementById('ocrStatus').style.display = 'block';
+                document.getElementById('ocrText').textContent = 'Extracting...';
+                window._ocrInProgress = true;
+                Tesseract.recognize(file, 'eng', { logger: m => {
+                    if (m && m.status === 'recognizing text' && m.progress) {
+                        document.getElementById('ocrText').textContent = 'Extracting... ' + Math.round(m.progress*100) + '%';
+                    }
+                }}).then(function(result) {
+                    const rawText = (result && result.data && result.data.text) ? result.data.text : '';
+                    uploadedImageText = cleanOcrText(rawText);
+                    document.getElementById('ocrText').textContent = uploadedImageText
+                        ? (uploadedImageText.length > 200 ? uploadedImageText.slice(0, 200) + '...' : uploadedImageText)
+                        : (rawText.trim() ? 'No readable text found' : 'No text found');
+                    window._ocrInProgress = false;
+                }).catch(function(err){
+                    console.error('OCR error', err);
+                    document.getElementById('ocrText').textContent = 'OCR failed';
+                    window._ocrInProgress = false;
+                });
+            } catch (err) {
+                console.warn('Tesseract not available', err);
+                window._ocrInProgress = false;
+            }
+
+            return true;
+        }
+
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!handleImageFile(file)) e.target.value = '';
+        });
+
+        // ---- Drag a clipping onto the page -------------------------------
+        // dragenter/dragleave fire constantly as the pointer crosses child
+        // elements, so count them instead of toggling on every event.
+        let dragDepth = 0;
+
+        function draggingFiles(e) {
+            const types = e.dataTransfer && e.dataTransfer.types;
+            return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
+        }
+
+        function endDrag() {
+            dragDepth = 0;
+            document.body.classList.remove('dragging-file');
+        }
+
+        window.addEventListener('dragenter', function(e) {
+            if (!draggingFiles(e)) return;
+            e.preventDefault();
+            dragDepth++;
+            document.body.classList.add('dragging-file');
+        });
+
+        window.addEventListener('dragover', function(e) {
+            if (!draggingFiles(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        });
+
+        window.addEventListener('dragleave', function(e) {
+            if (!draggingFiles(e)) return;
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (dragDepth === 0) endDrag();
+        });
+
+        window.addEventListener('drop', function(e) {
+            if (!draggingFiles(e)) return;
+            e.preventDefault();
+            endDrag();
+            const file = e.dataTransfer.files && e.dataTransfer.files[0];
+            if (!file) return;
+            if (!file.type || !file.type.startsWith('image/')) {
+                alert('That file isn\'t an image. Drop a screenshot or a photo, or paste the text instead.');
+                return;
+            }
+            handleImageFile(file);
+            document.querySelector('.drop-target').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+
+        // Dragging out of the window entirely leaves the veil stuck otherwise
+        window.addEventListener('dragend', endDrag);
+        document.addEventListener('mouseleave', function() { if (dragDepth) endDrag(); });
+
+        // ---- Something was shared in from another app --------------------
+        // The service worker parked it; collect it, fill the form, and clean up
+        // so a refresh doesn't replay an old share.
+        async function collectSharedPayload() {
+            if (!('caches' in window)) return;
+            if (!new URLSearchParams(location.search).has('shared')) return;
+
+            let filled = false;
+            try {
+                const cache = await caches.open('truth-gazette-share');
+
+                const metaHit = await cache.match('/__shared_meta');
+                if (metaHit) {
+                    const meta = await metaHit.json();
+                    await cache.delete('/__shared_meta');
+
+                    // A shared link goes in the URL field; anything else is a claim
+                    const link = (meta.url || '').trim();
+                    const words = [meta.title, meta.text].filter(Boolean).join(' ').trim();
+                    const looksLikeLink = /^https?:\/\/\S+$/i.test(words);
+
+                    if (link || looksLikeLink) {
+                        document.getElementById('urlInput').value = link || words;
+                        filled = true;
+                    }
+                    if (words && !looksLikeLink) {
+                        document.getElementById('newsInput').value = words;
+                        filled = true;
+                    }
+                }
+
+                const imageHit = await cache.match('/__shared_image');
+                if (imageHit) {
+                    const blob = await imageHit.blob();
+                    await cache.delete('/__shared_image');
+                    if (blob && blob.size) {
+                        const named = new File([blob], 'shared-image', { type: blob.type || 'image/png' });
+                        handleImageFile(named);
+                        filled = true;
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not read shared content', e);
+            }
+
+            // Drop the query string either way, so reloading is a clean start
+            history.replaceState({}, '', location.pathname);
+
+            if (filled) {
+                document.querySelector('.input-methods').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        window.addEventListener('load', collectSharedPayload);
+
+        // ---- Paste a screenshot ------------------------------------------
+        // On desktop a screenshot usually lives on the clipboard, never as a
+        // file on disk. Ctrl+V should just work.
+        window.addEventListener('paste', function(e) {
+            if (!e.clipboardData) return;
+            const target = e.target;
+            // Don't hijack pasting text into the actual text fields
+            const typingInto = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT');
+            const items = Array.prototype.slice.call(e.clipboardData.items || []);
+            const imageItem = items.find(function(i) { return i.type && i.type.startsWith('image/'); });
+            if (!imageItem) return;
+            if (typingInto && e.clipboardData.getData('text')) return;
+            const file = imageItem.getAsFile();
+            if (file) {
+                e.preventDefault();
+                handleImageFile(file);
+            }
+        });
+
+        let userGuess = null;
+
+        // A single guess costs nothing and teaches nothing. Keeping a running
+        // record is what gives it stakes, without adding a second click.
+        function recordGuessOutcome(wasRight) {
+            let record = { right: 0, total: 0 };
+            try {
+                const saved = localStorage.getItem('tg_record');
+                if (saved) record = JSON.parse(saved);
+            } catch (e) { /* private mode or blocked storage */ }
+
+            record.right = (record.right || 0) + (wasRight ? 1 : 0);
+            record.total = (record.total || 0) + 1;
+
+            try { localStorage.setItem('tg_record', JSON.stringify(record)); } catch (e) {}
+
+            return record.total < 2
+                ? ''
+                : `Your record: ${record.right} of ${record.total}`;
+        }
+
+        // These are the steps the server genuinely runs, in order. We can't know
+        // real progress from a single request, so we narrate the stages without
+        // inventing counts or percentages we don't have.
+        let loadingTimer = null;
+
+        function startLoadingStages() {
+            const stages = [
+                'Reading the claim…',
+                'Searching for live coverage…',
+                'Collecting candidate sources…',
+                'Fetching each source to confirm it exists…',
+                'Checking dates and discarding what we can\'t reach…',
+                'Writing up the findings…'
+            ];
+            let i = 0;
+            stopLoadingStages();
+            loadingTimer = setInterval(() => {
+                i++;
+                const el = document.getElementById('loadingStage');
+                if (!el) { stopLoadingStages(); return; }
+                // Hold on the last stage rather than looping, so a slow response
+                // never claims to start over.
+                el.textContent = stages[Math.min(i, stages.length - 1)];
+            }, 2600);
+        }
+
+        function stopLoadingStages() {
+            if (loadingTimer) { clearInterval(loadingTimer); loadingTimer = null; }
+        }
+
+        // Standing preference, set from the notice under the masthead. Skipping
+        // a single ballot is a one-off and deliberately does not change it.
+        function ballotEnabled() {
+            try { return localStorage.getItem('tg_ballot') !== 'off'; } catch (e) { return true; }
+        }
+
+        function setBallot(on) {
+            try { localStorage.setItem('tg_ballot', on ? 'on' : 'off'); } catch (e) {}
+            paintBallotNotice();
+
+            // Turning it off with the ballot already on screen should act on it,
+            // not leave the reader staring at a question they just dismissed.
+            const panel = document.getElementById('guessPanel');
+            if (!on && panel && panel.style.display === 'block') {
+                submitGuess(null);
+            }
+        }
+
+        function paintBallotNotice() {
+            const el = document.getElementById('ballotNotice');
+            if (!el) return;
+            const on = ballotEnabled();
+            el.innerHTML = on
+                ? `House rule: the reader is asked for a verdict before ours is printed. <button class="notice-link" onclick="setBallot(false)">Turn this off</button>`
+                : `House rule suspended: verdicts are printed without asking first. <button class="notice-link" onclick="setBallot(true)">Turn it back on</button>`;
+        }
+
+        document.addEventListener('DOMContentLoaded', paintBallotNotice);
+
+        function showGuessFirst() {
+            const textInput = document.getElementById('newsInput').value.trim();
+            const urlInput = document.getElementById('urlInput').value.trim();
+            if (!textInput && !urlInput && !uploadedImage) {
+                alert('Please provide at least one input: text, URL, or image!');
+                return;
+            }
+            userGuess = null;
+
+            if (!ballotEnabled()) {
+                investigateNews();
                 return;
             }
 
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    uploadedImage = e.target.result;
-                    document.getElementById('previewImg').src = uploadedImage;
-                    document.getElementById('imagePreview').style.display = 'block';
-                };
-                reader.readAsDataURL(file);
+            document.getElementById('guessPanel').style.display = 'block';
+            document.getElementById('resultArea').innerHTML = '';
+            document.getElementById('guessPanel').scrollIntoView({behavior: 'smooth'});
+        }
 
-                // Run OCR in browser via Tesseract.js (best-effort)
-                try {
-                    document.getElementById('ocrStatus').style.display = 'block';
-                    document.getElementById('ocrText').textContent = 'Extracting...';
-                    window._ocrInProgress = true;
-                    // Use the file directly for better OCR
-                    Tesseract.recognize(file, 'eng', { logger: m => {
-                        if (m && m.status === 'recognizing text' && m.progress) {
-                            document.getElementById('ocrText').textContent = 'Extracting... ' + Math.round(m.progress*100) + '%';
-                        }
-                    }}).then(function(result) {
-                        uploadedImageText = (result && result.data && result.data.text) ? result.data.text.trim() : '';
-                        if (uploadedImageText) {
-                            document.getElementById('ocrText').textContent = uploadedImageText.length > 200 ? uploadedImageText.slice(0,200) + '...' : uploadedImageText;
-                        } else {
-                            document.getElementById('ocrText').textContent = 'No text found';
-                        }
-                        window._ocrInProgress = false;
-                    }).catch(function(err){
-                        console.error('OCR error', err);
-                        document.getElementById('ocrText').textContent = 'OCR failed';
-                        window._ocrInProgress = false;
-                    });
-                } catch (err) {
-                    console.warn('Tesseract not available', err);
-                    window._ocrInProgress = false;
-                }
-            }
-        });
+        function submitGuess(guess) {
+            userGuess = guess;
+            document.getElementById('guessPanel').style.display = 'none';
+            investigateNews();
+        }
 
         function clearAll() {
             document.getElementById('newsInput').value = '';
             document.getElementById('urlInput').value = '';
-            // Reset file input and preview image
+            // Reset file input, preview and OCR state
             const imgInput = document.getElementById('imageInput');
             try { imgInput.value = null; } catch (e) { imgInput.value = ''; }
             const preview = document.getElementById('previewImg');
             if (preview) preview.src = '';
-            document.getElementById('imagePreview').style.display = 'none';
-
-            // Clear OCR state and UI
-            uploadedImage = null;
-            uploadedImageText = '';
-            window._ocrInProgress = false;
-            const ocrStatus = document.getElementById('ocrStatus');
-            if (ocrStatus) ocrStatus.style.display = 'none';
-            const ocrTextEl = document.getElementById('ocrText');
-            if (ocrTextEl) ocrTextEl.textContent = '';
+            clearImage();
 
             // Clear results
             document.getElementById('resultArea').innerHTML = '';
+            document.getElementById('guessPanel').style.display = 'none';
+            userGuess = null;
             // Optional: focus headline input
             const newsInput = document.getElementById('newsInput');
             if (newsInput) newsInput.focus();
@@ -776,12 +1535,12 @@
             analyzeBtn.disabled = true;
             resultArea.innerHTML = `
                 <div class="loading">
-                    <div class="loading-text"><i class="fas fa-hourglass-half"></i> INVESTIGATION IN PROGRESS <i class="fas fa-hourglass-half"></i></div>
-                    <div class="typewriter">Our AI journalists are fact-checking...</div>
-                    <div class="typewriter" style="margin-top: 10px;">Cross-referencing with trusted sources...</div>
-                    <div class="typewriter" style="margin-top: 10px;">Analyzing credibility indicators...</div>
+                    <div class="loading-text"><span style="white-space: nowrap;"><i class="fas fa-hourglass-half"></i>&nbsp;INVESTIGATION IN PROGRESS&nbsp;<i class="fas fa-hourglass-half"></i></span></div>
+                    <div class="typewriter" id="loadingStage">Reading the claim…</div>
+                    <div class="loading-note" id="loadingNote">Every source has to be fetched and confirmed before it reaches you. That takes a few seconds.</div>
                 </div>
             `;
+            startLoadingStages();
 
             // Auto-scroll to results
             setTimeout(() => {
@@ -797,13 +1556,10 @@
                     ocrText: uploadedImageText
                 };
 
-                // If OCR extracted text and there's no text input, use it as the text payload
-                if (!payload.text && payload.ocrText) {
-                    payload.text = payload.ocrText;
-                } else if (payload.ocrText) {
-                    // append OCR text to provided text for extra context
-                    payload.text = (payload.text || '') + '\n\n[OCR TEXT]\n' + payload.ocrText;
-                }
+                // Typed text and OCR text are sent as separate fields. The server
+                // labels them differently in the prompt, because text scanned off
+                // a screenshot carries errors that typed text does not. Merging
+                // them here would hide that distinction again.
 
                 // Basic client-side validation and sanitization to save tokens:
                 if (payload.text && payload.text.length > 3000) {
@@ -816,12 +1572,17 @@
                 const response = await fetch('/api/investigate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Session-Id': TG_SESSION },
+                    // The guess deliberately stays on the client. Sending it would
+                    // hand the fact-checker the answer the reader is hoping for.
                     body: JSON.stringify({ ...payload, sessionId: TG_SESSION })
                 });
 
                 const data = await response.json();
                 if (!response.ok) {
-                    throw new Error(data.error || 'Server request failed');
+                    const failure = new Error(data.error || 'Server request failed');
+                    failure.code = data.code || '';
+                    failure.retryAfter = data.retry_after || 0;
+                    throw failure;
                 }
 
                 // Server returns { result, groundingMetadata }
@@ -830,6 +1591,13 @@
                 
                 displayResult(result, groundingMetadata, data.quotaRemaining);
 
+                // The submission is spent. A link or a picture left attached from
+                // the last check is invisible once you scroll past it, and gets
+                // silently bundled into the next, unrelated claim. Only clear on
+                // success, so a failed run can be retried without retyping.
+                document.getElementById('urlInput').value = '';
+                removeImage();
+
                 // Auto-scroll to results after they load
                 setTimeout(() => {
                     resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -837,23 +1605,76 @@
 
             } catch (error) {
                 console.error('Error:', error);
-                resultArea.innerHTML = `
-                    <div class="result-article">
-                        <div class="result-headline" style="background: #c41e3a;">
-                            <h2><i class="fas fa-exclamation-triangle"></i> INVESTIGATION FAILED <i class="fas fa-exclamation-triangle"></i></h2>
-                            <div class="verdict-badge verdict-uncertain">ERROR</div>
-                        </div>
-                        <div class="result-body">
-                            <div class="analysis-section">
-                                <p>Our investigation bureau encountered technical difficulties. Please check your API key and try again.</p>
-                                <p style="font-size: 0.9em; margin-top: 15px; color: #666;">Error details: ${error.message}</p>
-                            </div>
-                        </div>
-                    </div>
-                `;
+                resultArea.innerHTML = renderNotice(error);
             } finally {
+                stopLoadingStages();
                 analyzeBtn.disabled = false;
             }
+        }
+
+        // Titles, snippets, key factors and notices all end up in innerHTML,
+        // and most of them come from an external API. Escape everything.
+        const escapeHtml = (str) => String(str == null ? '' : str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+        // When the paper can't run a story it says why, in its own voice, and
+        // never in the words of whatever system underneath actually failed.
+        function renderNotice(error) {
+            const code = (error && error.code) || '';
+            const wait = (error && error.retryAfter) ? Math.max(1, Math.round(error.retryAfter)) : 0;
+
+            const notices = {
+                editor_off_duty: {
+                    kicker: 'Notice to Readers',
+                    headline: 'The Editor Is Off Duty',
+                    body: 'The Gazette files a limited number of reports each day, and that number has been reached. Nothing has been decided about the claim you submitted. The desk reopens shortly.',
+                    footer: 'Try again in a few minutes.'
+                },
+                desk_busy: {
+                    kicker: 'Notice to Readers',
+                    headline: 'The Desk Is Backed Up',
+                    body: wait
+                        ? `Copy is arriving faster than it can be checked. Try again in about ${wait} second${wait === 1 ? '' : 's'}.`
+                        : 'Copy is arriving faster than it can be checked. Try again in a moment.',
+                    footer: 'Requests are limited per reader.'
+                },
+                day_done: {
+                    kicker: 'Notice to Readers',
+                    headline: 'Today\'s Edition Is Closed',
+                    body: 'You have used this reader\'s checks for today. The presses roll again tomorrow.',
+                    footer: 'The limit resets at midnight UTC.'
+                },
+                press_failure: {
+                    kicker: 'Stop Press',
+                    headline: 'The Edition Did Not Go To Press',
+                    body: 'Something failed on the way to the verification desk, so there is no verdict to report. This says nothing about the claim itself, only about us.',
+                    footer: 'Try again in a moment.'
+                }
+            };
+
+            const notice = notices[code] || {
+                kicker: 'Stop Press',
+                headline: 'The Edition Did Not Go To Press',
+                body: 'The check could not be completed, so there is no verdict to report. This says nothing about whether the claim is true or false.',
+                footer: 'Try again in a moment. If it keeps happening, the desk is likely down.'
+            };
+
+            return `
+                <div class="result-article notice-edition">
+                    <div class="notice-plate">
+                        <div class="notice-kicker">${escapeHtml(notice.kicker)}</div>
+                        <h2>${escapeHtml(notice.headline)}</h2>
+                    </div>
+                    <div class="notice-body">
+                        <p>${escapeHtml(notice.body)}</p>
+                        <p class="notice-footer">${escapeHtml(notice.footer)}</p>
+                    </div>
+                </div>
+            `;
         }
 
         function displayResult(result, groundingMetadata, quotaRemaining) {
@@ -865,20 +1686,23 @@
             let icon = verdict === 'FAKE' ? 'fas fa-times-circle' : verdict === 'REAL' ? 'fas fa-check-circle' : 'fas fa-question-circle';
             let bgColor = verdict === 'FAKE' ? '#c41e3a' : verdict === 'REAL' ? '#2d5016' : '#f4a500';
             
-            // Titles, snippets and key factors come from an external API, so
-            // escape them before they go anywhere near innerHTML.
-            const escapeHtml = (str) => String(str == null ? '' : str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-
             // The red marker comes from `.key-factors li:before`, so no icon here
             // — having both rendered a doubled arrow on every bullet.
             const keyFactorsHTML = result.keyFactors
                 ? result.keyFactors.map(factor => `<li>${escapeHtml(factor)}</li>`).join('')
                 : '';
+
+            // The named technique, when the backend found a real one. This is the
+            // part meant to transfer: recognising the method beats remembering
+            // that one particular story turned out to be false.
+            const t = result.tactic;
+            const tacticHTML = (t && t.name && t.explanation) ? `
+                <div class="tactic-card">
+                    <div class="tactic-label">How It Spread</div>
+                    <h4>${escapeHtml(t.name)}</h4>
+                    <p>${escapeHtml(t.explanation)}</p>
+                    ${t.spotItNext ? `<div class="spot-it">${escapeHtml(t.spotItNext)}</div>` : ''}
+                </div>` : '';
 
             // Meta and last-checked text
             const meta = result._meta || {};
@@ -915,6 +1739,10 @@
                         return `<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">
                             <div class="source-left">
                                 <span class="source-title"><strong>[${counter}]</strong> ${escapeHtml(source.title || domain)}</span>
+                                <!-- Who published it is the credibility signal on a
+                                     fact-checker, so print it rather than hiding it
+                                     behind the link. -->
+                                ${domain ? `<span class="source-domain">${escapeHtml(domain)}</span>` : ''}
                                 <span class="source-desc" style="margin-top:4px; font-size:0.85em; color:#666;">${escapeHtml(descText)}</span>
                             </div>
                             <i class="fas fa-external-link-alt"></i>
@@ -954,6 +1782,12 @@
                         <h2><i class="${icon}"></i> ${escapeHtml(result.headline || verdict + ' NEWS DETECTED')}&nbsp;<i class="${icon}"></i></h2>
                         <div class="verdict-badge ${verdictClass}">${verdict}</div>
                     </div>
+
+                    ${userGuess ? `
+                    <div class="guess-outcome">
+                        <span>Reader's call: ${escapeHtml(userGuess === 'UNCERTAIN' ? 'NOT SURE' : userGuess)} &nbsp;·&nbsp; Gazette's verdict: ${escapeHtml(verdict)}</span>
+                        <span class="tally">${escapeHtml(recordGuessOutcome(userGuess === verdict))}</span>
+                    </div>` : ''}
                     
                     <div class="result-body">
                         <div class="confidence-meter">
@@ -974,10 +1808,12 @@
                             </div>
                         ` : ''}
 
+                        ${tacticHTML}
+
                         ${sourcesHTML}
 
                         <div style="margin-top: 25px; padding: 15px; background: #fafaf8; border: 1px solid #ddd; font-size: 0.9em; text-align: center;">
-                            <strong><i class="fas fa-balance-scale"></i> Editorial Note:</strong> This analysis was conducted by Truth Gazette's AI verification engine. Always cross-reference important information through multiple credible sources.
+                            <strong><i class="fas fa-balance-scale"></i> Editorial Note:</strong> Written by the Gazette's verification engine, working from live search. The sources above were fetched and confirmed; the reasoning is printed so it can be argued with.
                         </div>
                     </div>
                 </div>
@@ -1036,6 +1872,19 @@
             const el = document.getElementById('dateLine');
             if (el) el.textContent = dateStr;
         })();
+    </script>
+
+    <script>
+        // Register after load so it never competes with the first paint. The
+        // worker is network-first, so registering it cannot pin an old build.
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').catch(() => {
+                    // Unsupported browser, private mode, or plain http. The site
+                    // works exactly the same without it.
+                });
+            });
+        }
     </script>
 </body>
 </html>
