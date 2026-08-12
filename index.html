@@ -210,7 +210,7 @@
             text-transform: uppercase;
         }
 
-        .remove-image:hover { color: #fff; background: #c41e3a; }
+        @media (hover: hover) { .remove-image:hover { color: #fff; background: #c41e3a; } }
 
         .analyze-section {
             text-align: center;
@@ -311,14 +311,24 @@
             box-shadow: 3px 3px 0 #1a1a1a;
         }
 
-        .guess-btn:hover {
-            transform: translate(2px, 2px);
-            box-shadow: 1px 1px 0 #1a1a1a;
+        /* Touch browsers latch :hover after a tap, so a tapped button stays
+           looking pressed until you tap elsewhere. Only hover where hovering
+           is real; on touch, use :active, which ends when the finger lifts. */
+        @media (hover: hover) {
+            .guess-btn:hover {
+                transform: translate(2px, 2px);
+                box-shadow: 1px 1px 0 #1a1a1a;
+            }
+
+            .guess-btn.real:hover   { background: #2d5016; color: #fff; border-color: #2d5016; box-shadow: 1px 1px 0 #1b3009; }
+            .guess-btn.fake:hover   { background: #c41e3a; color: #fff; border-color: #8b1528; box-shadow: 1px 1px 0 #8b1528; }
+            .guess-btn.unsure:hover { background: #f4a500; color: #1a1a1a; border-color: #b87c00; box-shadow: 1px 1px 0 #b87c00; }
         }
 
-        .guess-btn.real:hover   { background: #2d5016; color: #fff; border-color: #2d5016; box-shadow: 1px 1px 0 #1b3009; }
-        .guess-btn.fake:hover   { background: #c41e3a; color: #fff; border-color: #8b1528; box-shadow: 1px 1px 0 #8b1528; }
-        .guess-btn.unsure:hover { background: #f4a500; color: #1a1a1a; border-color: #b87c00; box-shadow: 1px 1px 0 #b87c00; }
+        .guess-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #1a1a1a; }
+        .guess-btn.real:active   { background: #2d5016; color: #fff; border-color: #2d5016; }
+        .guess-btn.fake:active   { background: #c41e3a; color: #fff; border-color: #8b1528; }
+        .guess-btn.unsure:active { background: #f4a500; color: #1a1a1a; border-color: #b87c00; }
 
         /* Sits with the three choices as a real fourth option. The previous
            version was a grey underline nobody found, including people who knew
@@ -951,7 +961,7 @@
             text-decoration: underline;
         }
 
-        .notice-link:hover { color: #8b1528; }
+        @media (hover: hover) { .notice-link:hover { color: #8b1528; } }
 
         .flashlight-hint {
             position: fixed;
@@ -1444,13 +1454,66 @@
 
         document.addEventListener('DOMContentLoaded', paintBallotNotice);
 
-        function showGuessFirst() {
+        // Checks the submission and normalises the URL field in place.
+        // Runs before the ballot, so nobody is asked to commit to a verdict and
+        // only then told their input was rejected.
+        function submissionIsUsable() {
             const textInput = document.getElementById('newsInput').value.trim();
-            const urlInput = document.getElementById('urlInput').value.trim();
-            if (!textInput && !urlInput && !uploadedImage) {
+            const urlField = document.getElementById('urlInput');
+            const rawUrl = urlField.value.trim();
+
+            if (!textInput && !rawUrl && !uploadedImage) {
                 alert('Please provide at least one input: text, URL, or image!');
-                return;
+                return false;
             }
+
+            if (!rawUrl) return true;
+
+            // People put claims in the link box. Rather than refusing, move it
+            // to where it belongs and carry on — a headline typed in the wrong
+            // field is still a perfectly good thing to check.
+            const looksNothingLikeALink = /\s/.test(rawUrl)
+                || (!rawUrl.includes('.') && !/^[a-z][a-z0-9+.-]*:/i.test(rawUrl));
+
+            if (looksNothingLikeALink) {
+                const textField = document.getElementById('newsInput');
+                textField.value = textField.value.trim()
+                    ? textField.value.trim() + '\n\n' + rawUrl
+                    : rawUrl;
+                urlField.value = '';
+                return true;
+            }
+
+            // People type "bbc.com/news" far more often than they type the
+            // scheme, so add it rather than refusing the input. Only http(s)
+            // is accepted: new URL() alone happily parses javascript: and
+            // file: URLs, which have no business here.
+            const candidate = /^[a-z][a-z0-9+.-]*:/i.test(rawUrl) ? rawUrl : 'https://' + rawUrl;
+            let parsed;
+            try {
+                parsed = new URL(candidate);
+            } catch (e) {
+                alert('That does not look like a web address. Paste a link like https://example.com/article, or put the claim in the text box instead.');
+                urlField.focus();
+                return false;
+            }
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                alert('Only http and https links can be investigated.');
+                urlField.focus();
+                return false;
+            }
+            if (!parsed.hostname.includes('.')) {
+                alert('That does not look like a web address. Paste a link like https://example.com/article, or put the claim in the text box instead.');
+                urlField.focus();
+                return false;
+            }
+
+            urlField.value = parsed.href;
+            return true;
+        }
+
+        function showGuessFirst() {
+            if (!submissionIsUsable()) return;
             userGuess = null;
 
             if (!ballotEnabled()) {
@@ -1499,31 +1562,13 @@
                 return;
             }
 
-            // Validate URL if provided.
-            // People type "bbc.com/news" far more often than they type the
-            // scheme, so add it rather than refusing the input. Only http(s)
-            // is accepted: new URL() alone happily parses javascript: and
-            // file: URLs, which have no business here.
-            if (urlInput) {
-              const candidate = /^[a-z][a-z0-9+.-]*:/i.test(urlInput) ? urlInput : 'https://' + urlInput;
-              let parsed;
-              try {
-                parsed = new URL(candidate);
-              } catch (e) {
-                alert('That does not look like a valid web address. Try something like https://example.com/article');
+            // Already checked and normalised before the ballot was shown; this
+            // just picks up the cleaned value.
+            if (!submissionIsUsable()) {
+                analyzeBtn.disabled = false;
                 return;
-              }
-              if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-                alert('Only http and https links can be investigated.');
-                return;
-              }
-              if (!parsed.hostname.includes('.')) {
-                alert('That web address is missing a domain. Try something like https://example.com/article');
-                return;
-              }
-              urlInput = parsed.href;
-              document.getElementById('urlInput').value = urlInput;
             }
+            urlInput = document.getElementById('urlInput').value.trim();
 
             // If OCR is still running, prevent submission
             if (typeof window._ocrInProgress !== 'undefined' && window._ocrInProgress) {
