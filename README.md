@@ -111,7 +111,7 @@ What's next:
 
 ## Why This Exists
 
-An AI-powered media literacy platform, built by Ishant, Yashraj and Isha. Made to actually work instead of just being a fancy demo.
+An AI-powered media literacy platform by Ishant, Yashraj and Isha.
 
 ## License
 
