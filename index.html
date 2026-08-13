@@ -1687,6 +1687,17 @@
                 lastVerifiedText = `Last checked ${d.toLocaleString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })} UTC`;
             }
 
+            const discarded = [];
+            if (meta.unverifiedSourceCount > 0) {
+                discarded.push(`${meta.unverifiedSourceCount} link${meta.unverifiedSourceCount > 1 ? 's' : ''} we could not open`);
+            }
+            if (meta.withheldSourceCount > 0) {
+                discarded.push(`${meta.withheldSourceCount} from sites we do not cite`);
+            }
+            const discardedHTML = discarded.length
+                ? `<p style="font-size:0.82em; color:#666; margin:-4px 0 10px; font-style:italic;">Thrown out before printing: ${discarded.join(', ')}.</p>`
+                : '';
+
             let sourcesHTML = '';
             const sources = result.sources || [];
 
@@ -1723,6 +1734,7 @@
                     sourcesHTML = `
                         <div class="sources-section">
                             <h4><i class="fas fa-book"></i> Sources <span style="font-size:0.75em; color:#27ae60; font-weight:normal;">(${counter} verified)</span>${lastVerifiedText ? `<span style="font-size:0.75em; color:#666; font-weight:normal; margin-left:8px;">• ${lastVerifiedText}</span>` : ''}</h4>
+                            ${discardedHTML}
                             ${sourceItems}
                         </div>
                     `;
@@ -1732,6 +1744,7 @@
                     <div class="sources-section" style="border-color:#f4a500;">
                         <h4><i class="fas fa-exclamation-triangle" style="color:#f4a500;"></i> No Verified Sources Found</h4>
                         <p style="font-size:0.9em;color:#666;">The AI could not find verifiable sources for this claim. This doesn't mean the claim is false, but it couldn't be independently verified.</p>
+                        ${discardedHTML}
                     </div>
                 `;
             }
