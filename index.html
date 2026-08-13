@@ -7,22 +7,17 @@
     <meta name="google-site-verification" content="mAv1xaaNnmstsYik-xHwprvjA-j5WBKwV2ybUcMLepw" />
     <meta name="description" content="A media and information literacy tool that checks claims from text, links or screenshots, and never shows a source it hasn't fetched and verified.">
     <meta name="keywords" content="media and information literacy, fact checker, news verification, misinformation, source verification, MIL">
-    
+
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Libre+Baskerville:wght@400;700&family=Special+Elite&display=swap" rel="stylesheet">
-    <!-- Favicon -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="shortcut icon" href="/favicon.svg">
-    <!-- Installable on a phone: most of our readers are on Android, and the
-         claims they check arrive there. Installing is optional, never required. -->
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#1a1a1a">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="apple-mobile-web-app-title" content="Truth Gazette">
-    <!-- Tesseract.js for client-side OCR -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2/dist/tesseract.min.js"></script>
-    <!-- Vercel Web Analytics -->
     <script>window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };</script>
     <script defer src="/_vercel/insights/script.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -982,20 +977,20 @@
             .masthead {
                 font-size: 2em;
             }
-            
+
             .result-body {
                 columns: 1;
             }
-            
+
             .newspaper-content {
                 padding: 20px;
             }
-            
+
             .analyze-btn {
                 font-size: 1.2em;
                 padding: 15px 30px;
             }
-            
+
             .clear-btn {
                 margin-left: 0;
                 margin-top: 15px;
@@ -1006,7 +1001,6 @@
     </style>
 </head>
 <body>
-    <!-- Shown only while a file is being dragged over the window -->
     <div id="dropVeil" aria-hidden="true">
         <div class="drop-plate">
             <span class="plate-mark"><i class="fas fa-paperclip"></i></span>
@@ -1032,7 +1026,7 @@
 
         <div class="newspaper-content">
             <div class="section-title">SUBMIT FOR VERIFICATION</div>
-            
+
             <div class="input-methods">
                 <div class="input-card">
                     <h3><i class="fas fa-edit"></i> Text Analysis</h3>
@@ -1058,8 +1052,6 @@
                     </div>
                     <div class="image-preview" id="imagePreview">
                         <img id="previewImg" src="" alt="Preview">
-                        <!-- Removing one input used to mean clearing all of them,
-                             so images got left attached to unrelated checks. -->
                         <button type="button" class="remove-image" onclick="removeImage()" aria-label="Remove this image">
                             <i class="fas fa-times"></i> Remove image
                         </button>
@@ -1071,19 +1063,13 @@
 
             <div class="analyze-section">
                 <button class="analyze-btn" id="analyzeBtn" onclick="showGuessFirst()">
-                    <!-- The label is kept unbreakable so the flanking icons can
-                         never orphan onto their own line on a narrow screen. -->
                     <span style="white-space: nowrap;"><i class="fas fa-search"></i>&nbsp;INVESTIGATE NOW&nbsp;<i class="fas fa-search"></i></span>
                 </button>
                 <button class="clear-btn" onclick="clearAll()"><i class="fas fa-trash"></i> Clear All</button>
             </div>
 
-            <!-- House notice. A paper states its own policy in small type; this
-                 one happens to be adjustable. -->
             <p class="house-notice" id="ballotNotice"></p>
 
-            <!-- Reader's ballot: the guess is taken before any evidence is shown,
-                 and never leaves the browser. -->
             <div id="guessPanel" class="guess-panel" style="display:none;">
                 <span class="ballot-tag">Reader's Verdict</span>
                 <h3>Before We Investigate</h3>
@@ -1094,8 +1080,6 @@
                     <button class="guess-btn unsure" onclick="submitGuess('UNCERTAIN')">Not Sure</button>
                 </div>
                 <p class="guess-footnote">Your answer stays in your browser. We never send it to the AI, so it can't sway the verdict.</p>
-                <!-- Guessing first is the point, but someone checking a forwarded
-                     message in a hurry shouldn't be forced through it. -->
                 <button class="guess-skip" onclick="submitGuess(null)">Skip and just investigate</button>
             </div>
 
@@ -1110,13 +1094,9 @@
     </div>
 
     <script>
-        // NOTE: API keys must NOT be exposed in the frontend. All requests must be proxied through a server endpoint (e.g. `/api/investigate`) which reads API keys from environment variables.
-        const MODEL = "gemini-2.5-flash"; // Model identifier (server-side will use this)
-        // Serverless endpoint: POST /api/investigate — returns { result, groundingMetadata }
 
         let uploadedImage = null;
-        let uploadedImageText = ''; // OCR result (if any)
-        // Ensure anonymous session id exists (stored in localStorage)
+        let uploadedImageText = '';
         function ensureSession() {
             let sid = localStorage.getItem('tg_session');
             if (!sid) {
@@ -1127,15 +1107,8 @@
         }
         const TG_SESSION = ensureSession();
 
-        // Image preview functionality
-        // The API rejects anything over 15MB, and base64 inflates a file by
-        // roughly a third, so refuse early with a clear message instead of
-        // letting a phone photo fail deep in the request.
         const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-        // One path for every way an image can arrive: the file picker, a drag
-        // from the desktop, or a share from another app on Android.
-        // Drop just the picture, leaving whatever is typed alone.
         function removeImage() {
             const input = document.getElementById('imageInput');
             try { input.value = null; } catch (e) { input.value = ''; }
@@ -1158,9 +1131,6 @@
 
         const READABLE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'];
 
-        // OCR reads logos, icons and page furniture as character soup
-        // ("v p ' T ¢ 3 7 \ y g 4 4 w/ > @"). That soup gets sent to the model
-        // as part of the claim, so strip it before it goes anywhere.
         function cleanOcrText(raw) {
             if (typeof raw !== 'string' || !raw.trim()) return '';
 
@@ -1168,14 +1138,11 @@
                 const tokens = line.trim().split(/\s+/).filter(Boolean);
                 if (!tokens.length) return '';
 
-                // A token counts as real if it holds a word, or is a plain number
                 const isWord = (t) => /[A-Za-zÀ-ɏऀ-ॿ]{2,}/.test(t) || /^\d[\d,.\-\/:]*$/.test(t);
                 const words = tokens.filter(isWord);
 
-                // Mostly-not-words means furniture, not copy
                 if (words.length < 2 || words.length < tokens.length * 0.4) return '';
 
-                // Drop a leading run of stray characters before the real text starts
                 let start = 0;
                 while (start < tokens.length && !isWord(tokens[start])) start++;
                 return tokens.slice(start).join(' ');
@@ -1197,9 +1164,6 @@
                 return false;
             }
 
-            // iPhones hand over HEIC by default and neither Tesseract nor the
-            // browser can decode it, so say so plainly rather than showing a
-            // broken preview and an empty OCR result.
             if (file.type && !READABLE_IMAGE_TYPES.includes(file.type.toLowerCase())) {
                 alert('That image format (' + file.type + ') can\'t be read here. Please use JPG, PNG or WebP. On iPhone, take a screenshot instead of sharing the photo directly.');
                 clearImage();
@@ -1214,7 +1178,6 @@
             };
             reader.readAsDataURL(file);
 
-            // Run OCR in browser via Tesseract.js (best-effort)
             try {
                 document.getElementById('ocrStatus').style.display = 'block';
                 document.getElementById('ocrText').textContent = 'Extracting...';
@@ -1248,9 +1211,6 @@
             if (!handleImageFile(file)) e.target.value = '';
         });
 
-        // ---- Drag a clipping onto the page -------------------------------
-        // dragenter/dragleave fire constantly as the pointer crosses child
-        // elements, so count them instead of toggling on every event.
         let dragDepth = 0;
 
         function draggingFiles(e) {
@@ -1296,13 +1256,9 @@
             document.querySelector('.drop-target').scrollIntoView({ behavior: 'smooth', block: 'center' });
         });
 
-        // Dragging out of the window entirely leaves the veil stuck otherwise
         window.addEventListener('dragend', endDrag);
         document.addEventListener('mouseleave', function() { if (dragDepth) endDrag(); });
 
-        // ---- Something was shared in from another app --------------------
-        // The service worker parked it; collect it, fill the form, and clean up
-        // so a refresh doesn't replay an old share.
         async function collectSharedPayload() {
             if (!('caches' in window)) return;
             if (!new URLSearchParams(location.search).has('shared')) return;
@@ -1316,7 +1272,6 @@
                     const meta = await metaHit.json();
                     await cache.delete('/__shared_meta');
 
-                    // A shared link goes in the URL field; anything else is a claim
                     const link = (meta.url || '').trim();
                     const words = [meta.title, meta.text].filter(Boolean).join(' ').trim();
                     const looksLikeLink = /^https?:\/\/\S+$/i.test(words);
@@ -1345,7 +1300,6 @@
                 console.warn('Could not read shared content', e);
             }
 
-            // Drop the query string either way, so reloading is a clean start
             history.replaceState({}, '', location.pathname);
 
             if (filled) {
@@ -1355,13 +1309,10 @@
 
         window.addEventListener('load', collectSharedPayload);
 
-        // ---- Paste a screenshot ------------------------------------------
-        // On desktop a screenshot usually lives on the clipboard, never as a
-        // file on disk. Ctrl+V should just work.
         window.addEventListener('paste', function(e) {
             if (!e.clipboardData) return;
             const target = e.target;
-            // Don't hijack pasting text into the actual text fields
+
             const typingInto = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT');
             const items = Array.prototype.slice.call(e.clipboardData.items || []);
             const imageItem = items.find(function(i) { return i.type && i.type.startsWith('image/'); });
@@ -1376,14 +1327,12 @@
 
         let userGuess = null;
 
-        // A single guess costs nothing and teaches nothing. Keeping a running
-        // record is what gives it stakes, without adding a second click.
         function recordGuessOutcome(wasRight) {
             let record = { right: 0, total: 0 };
             try {
                 const saved = localStorage.getItem('tg_record');
                 if (saved) record = JSON.parse(saved);
-            } catch (e) { /* private mode or blocked storage */ }
+            } catch (e) {  }
 
             record.right = (record.right || 0) + (wasRight ? 1 : 0);
             record.total = (record.total || 0) + 1;
@@ -1395,9 +1344,6 @@
                 : `Your record: ${record.right} of ${record.total}`;
         }
 
-        // These are the steps the server genuinely runs, in order. We can't know
-        // real progress from a single request, so we narrate the stages without
-        // inventing counts or percentages we don't have.
         let loadingTimer = null;
 
         function startLoadingStages() {
@@ -1415,8 +1361,7 @@
                 i++;
                 const el = document.getElementById('loadingStage');
                 if (!el) { stopLoadingStages(); return; }
-                // Hold on the last stage rather than looping, so a slow response
-                // never claims to start over.
+
                 el.textContent = stages[Math.min(i, stages.length - 1)];
             }, 2600);
         }
@@ -1425,8 +1370,6 @@
             if (loadingTimer) { clearInterval(loadingTimer); loadingTimer = null; }
         }
 
-        // Standing preference, set from the notice under the masthead. Skipping
-        // a single ballot is a one-off and deliberately does not change it.
         function ballotEnabled() {
             try { return localStorage.getItem('tg_ballot') !== 'off'; } catch (e) { return true; }
         }
@@ -1435,8 +1378,6 @@
             try { localStorage.setItem('tg_ballot', on ? 'on' : 'off'); } catch (e) {}
             paintBallotNotice();
 
-            // Turning it off with the ballot already on screen should act on it,
-            // not leave the reader staring at a question they just dismissed.
             const panel = document.getElementById('guessPanel');
             if (!on && panel && panel.style.display === 'block') {
                 submitGuess(null);
@@ -1454,9 +1395,6 @@
 
         document.addEventListener('DOMContentLoaded', paintBallotNotice);
 
-        // Checks the submission and normalises the URL field in place.
-        // Runs before the ballot, so nobody is asked to commit to a verdict and
-        // only then told their input was rejected.
         function submissionIsUsable() {
             const textInput = document.getElementById('newsInput').value.trim();
             const urlField = document.getElementById('urlInput');
@@ -1469,9 +1407,6 @@
 
             if (!rawUrl) return true;
 
-            // People put claims in the link box. Rather than refusing, move it
-            // to where it belongs and carry on — a headline typed in the wrong
-            // field is still a perfectly good thing to check.
             const looksNothingLikeALink = /\s/.test(rawUrl)
                 || (!rawUrl.includes('.') && !/^[a-z][a-z0-9+.-]*:/i.test(rawUrl));
 
@@ -1484,10 +1419,6 @@
                 return true;
             }
 
-            // People type "bbc.com/news" far more often than they type the
-            // scheme, so add it rather than refusing the input. Only http(s)
-            // is accepted: new URL() alone happily parses javascript: and
-            // file: URLs, which have no business here.
             const candidate = /^[a-z][a-z0-9+.-]*:/i.test(rawUrl) ? rawUrl : 'https://' + rawUrl;
             let parsed;
             try {
@@ -1535,18 +1466,17 @@
         function clearAll() {
             document.getElementById('newsInput').value = '';
             document.getElementById('urlInput').value = '';
-            // Reset file input, preview and OCR state
+
             const imgInput = document.getElementById('imageInput');
             try { imgInput.value = null; } catch (e) { imgInput.value = ''; }
             const preview = document.getElementById('previewImg');
             if (preview) preview.src = '';
             clearImage();
 
-            // Clear results
             document.getElementById('resultArea').innerHTML = '';
             document.getElementById('guessPanel').style.display = 'none';
             userGuess = null;
-            // Optional: focus headline input
+
             const newsInput = document.getElementById('newsInput');
             if (newsInput) newsInput.focus();
         }
@@ -1562,15 +1492,12 @@
                 return;
             }
 
-            // Already checked and normalised before the ballot was shown; this
-            // just picks up the cleaned value.
             if (!submissionIsUsable()) {
                 analyzeBtn.disabled = false;
                 return;
             }
             urlInput = document.getElementById('urlInput').value.trim();
 
-            // If OCR is still running, prevent submission
             if (typeof window._ocrInProgress !== 'undefined' && window._ocrInProgress) {
                 alert('Image OCR is still running. Please wait a moment for the OCR to complete and try again.');
                 analyzeBtn.disabled = false;
@@ -1587,13 +1514,11 @@
             `;
             startLoadingStages();
 
-            // Auto-scroll to results
             setTimeout(() => {
                 resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 100);
 
             try {
-                // Build payload and call server endpoint (server will handle API keys, grounding, rate-limiting, and caching)
                 const payload = {
                     text: textInput,
                     url: urlInput,
@@ -1601,12 +1526,6 @@
                     ocrText: uploadedImageText
                 };
 
-                // Typed text and OCR text are sent as separate fields. The server
-                // labels them differently in the prompt, because text scanned off
-                // a screenshot carries errors that typed text does not. Merging
-                // them here would hide that distinction again.
-
-                // Basic client-side validation and sanitization to save tokens:
                 if (payload.text && payload.text.length > 3000) {
                     alert('Text input too long. Please shorten to 3000 characters or less.');
                     analyzeBtn.disabled = false;
@@ -1617,8 +1536,6 @@
                 const response = await fetch('/api/investigate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Session-Id': TG_SESSION },
-                    // The guess deliberately stays on the client. Sending it would
-                    // hand the fact-checker the answer the reader is hoping for.
                     body: JSON.stringify({ ...payload, sessionId: TG_SESSION })
                 });
 
@@ -1630,20 +1547,14 @@
                     throw failure;
                 }
 
-                // Server returns { result, groundingMetadata }
                 const result = data.result;
                 const groundingMetadata = data.groundingMetadata || data.grounding_metadata || null;
-                
+
                 displayResult(result, groundingMetadata, data.quotaRemaining);
 
-                // The submission is spent. A link or a picture left attached from
-                // the last check is invisible once you scroll past it, and gets
-                // silently bundled into the next, unrelated claim. Only clear on
-                // success, so a failed run can be retried without retyping.
                 document.getElementById('urlInput').value = '';
                 removeImage();
 
-                // Auto-scroll to results after they load
                 setTimeout(() => {
                     resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }, 300);
@@ -1657,8 +1568,6 @@
             }
         }
 
-        // Titles, snippets, key factors and notices all end up in innerHTML,
-        // and most of them come from an external API. Escape everything.
         const escapeHtml = (str) => String(str == null ? '' : str)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -1666,8 +1575,6 @@
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
 
-        // When the paper can't run a story it says why, in its own voice, and
-        // never in the words of whatever system underneath actually failed.
         function renderNotice(error) {
             const code = (error && error.code) || '';
             const wait = (error && error.retryAfter) ? Math.max(1, Math.round(error.retryAfter)) : 0;
@@ -1725,21 +1632,15 @@
         function displayResult(result, groundingMetadata, quotaRemaining) {
             const resultArea = document.getElementById('resultArea');
 
-            
             let verdict = result.verdict.toUpperCase();
             let verdictClass = verdict === 'FAKE' ? 'verdict-fake' : verdict === 'REAL' ? 'verdict-real' : 'verdict-uncertain';
             let icon = verdict === 'FAKE' ? 'fas fa-times-circle' : verdict === 'REAL' ? 'fas fa-check-circle' : 'fas fa-question-circle';
             let bgColor = verdict === 'FAKE' ? '#c41e3a' : verdict === 'REAL' ? '#2d5016' : '#f4a500';
-            
-            // The red marker comes from `.key-factors li:before`, so no icon here
-            // — having both rendered a doubled arrow on every bullet.
+
             const keyFactorsHTML = result.keyFactors
                 ? result.keyFactors.map(factor => `<li>${escapeHtml(factor)}</li>`).join('')
                 : '';
 
-            // The named technique, when the backend found a real one. This is the
-            // part meant to transfer: recognising the method beats remembering
-            // that one particular story turned out to be false.
             const t = result.tactic;
             const tacticHTML = (t && t.name && t.explanation) ? `
                 <div class="tactic-card">
@@ -1749,7 +1650,6 @@
                     ${t.spotItNext ? `<div class="spot-it">${escapeHtml(t.spotItNext)}</div>` : ''}
                 </div>` : '';
 
-            // Meta and last-checked text
             const meta = result._meta || {};
             let lastVerifiedText = '';
             if (meta.lastVerifiedAt) {
@@ -1757,10 +1657,9 @@
                 lastVerifiedText = `Last checked ${d.toLocaleString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })} UTC`;
             }
 
-            // Build sources HTML - prefer result.sources (already verified by backend)
             let sourcesHTML = '';
             const sources = result.sources || [];
-            
+
             if (sources.length > 0) {
                 const blockedDomains = ['reddit.com', 'quora.com', 'medium.com', 'vertexaisearch'];
                 let counter = 0;
@@ -1776,17 +1675,12 @@
                         counter++;
                         let domain = '';
                         try { domain = new URL(source.url).hostname.replace('www.', ''); } catch (e) {}
-                        
-                        // The API already returns a clean, sentence-complete snippet
-                        // capped at a readable length, so don't re-cut it mid-word here.
+
                         const descText = source.snippet || domain;
 
                         return `<a href="${source.url}" target="_blank" rel="noopener noreferrer" class="source-link">
                             <div class="source-left">
                                 <span class="source-title"><strong>[${counter}]</strong> ${escapeHtml(source.title || domain)}</span>
-                                <!-- Who published it is the credibility signal on a
-                                     fact-checker, so print it rather than hiding it
-                                     behind the link. -->
                                 ${domain ? `<span class="source-domain">${escapeHtml(domain)}</span>` : ''}
                                 <span class="source-desc" style="margin-top:4px; font-size:0.85em; color:#666;">${escapeHtml(descText)}</span>
                             </div>
@@ -1815,15 +1709,11 @@
             const analysisText = result.analysis || '';
             const analysisHTML = analysisText.split(/\n\s*\n/).map(p => `<p>${p.trim()}</p>`).join('');
 
-            // Use confidence reason from AI (explaining WHY this confidence level)
             const confidenceReason = result.confidenceReason || '';
 
             resultArea.innerHTML = `
                 <div class="result-article">
                     <div class="result-headline" style="background: ${bgColor};">
-                        <!-- Both icons kept for symmetry. The non-breaking space
-                             ties the trailing one to the last word so it can never
-                             wrap onto a line by itself on a long headline. -->
                         <h2><i class="${icon}"></i> ${escapeHtml(result.headline || verdict + ' NEWS DETECTED')}&nbsp;<i class="${icon}"></i></h2>
                         <div class="verdict-badge ${verdictClass}">${verdict}</div>
                     </div>
@@ -1833,7 +1723,7 @@
                         <span>Reader's call: ${escapeHtml(userGuess === 'UNCERTAIN' ? 'NOT SURE' : userGuess)} &nbsp;·&nbsp; Gazette's verdict: ${escapeHtml(verdict)}</span>
                         <span class="tally">${escapeHtml(recordGuessOutcome(userGuess === verdict))}</span>
                     </div>` : ''}
-                    
+
                     <div class="result-body">
                         <div class="confidence-meter">
                             <h3>Confidence Level</h3>
@@ -1865,14 +1755,12 @@
             `;
         }
 
-        // Allow Enter to submit from text input
         document.getElementById('newsInput').addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && e.ctrlKey) {
                 investigateNews();
             }
         });
 
-        // Easter egg: lights-out "flashlight" mode (Shift+L to toggle)
         (function() {
             const overlay = document.createElement('div');
             overlay.id = 'flashlightOverlay';
@@ -1908,9 +1796,8 @@
             overlay.addEventListener('click', (e) => e.preventDefault());
         })();
 
-        // Set dynamic date
         (function() {
-            const months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 
+            const months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
                            'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
             const now = new Date();
             const dateStr = `${months[now.getMonth()]} ${now.getFullYear()} EDITION`;
@@ -1920,13 +1807,10 @@
     </script>
 
     <script>
-        // Register after load so it never competes with the first paint. The
-        // worker is network-first, so registering it cannot pin an old build.
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js').catch(() => {
-                    // Unsupported browser, private mode, or plain http. The site
-                    // works exactly the same without it.
+
                 });
             });
         }
