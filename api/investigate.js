@@ -708,14 +708,31 @@ module.exports = async (req, res) => {
     // CACHE CHECK
     // ========================================================================
     
+    // Hash the whole image, not a slice of it. The first 200 characters of a
+    // data URL are the mime prefix and the file header, which two screenshots
+    // of the same size share — slicing let different pictures collide on one
+    // cache entry. Include the scan too, since it changes what gets analysed.
     const inputHash = crypto.createHash('sha256')
-      .update(text + '|' + url + '|' + (image ? image.slice(0, 200) : ''))
+      .update(text + '|' + url + '|' + (ocrText || '') + '|' + (image || ''))
       .digest('hex');
 
     if (useUpstash && redisClient) {
-      const cached = await redisClient.get(`cache:${inputHash}`);
-      if (cached) {
-        return res.status(200).json({ ...JSON.parse(cached), cached: true });
+      // Upstash deserialises JSON for us and hands back an object; node-redis
+      // hands back the raw string. Parsing unconditionally turns a cache hit
+      // into a 500 — and only ever on the second run of the same input, which
+      // is exactly what a rehearsed demo does.
+      try {
+        const cached = await redisClient.get(`cache:${inputHash}`);
+        if (cached) {
+          const payload = typeof cached === 'string' ? JSON.parse(cached) : cached;
+          if (payload && typeof payload === 'object') {
+            return res.status(200).json({ ...payload, cached: true });
+          }
+        }
+      } catch (err) {
+        // A bad entry is not worth failing the request over. Fall through and
+        // check the claim properly.
+        console.warn('[investigate] cache read failed, checking fresh:', err.message);
       }
     }
 
