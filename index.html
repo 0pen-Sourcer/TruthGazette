@@ -1533,11 +1533,29 @@
                 }
                 payload.text = payload.text ? payload.text.replace(/([!?.]){2,}/g, '$1').replace(/(.)\1{20,}/g, '$1') : '';
 
-                const response = await fetch('/api/investigate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Session-Id': TG_SESSION },
-                    body: JSON.stringify({ ...payload, sessionId: TG_SESSION })
-                });
+                const controller = new AbortController();
+                const abortTimer = setTimeout(() => controller.abort(), 75000);
+
+                let response;
+                try {
+                    response = await fetch('/api/investigate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Session-Id': TG_SESSION },
+                        body: JSON.stringify({ ...payload, sessionId: TG_SESSION }),
+                        signal: controller.signal
+                    });
+                } catch (netErr) {
+                    if (netErr.name === 'AbortError') {
+                        const timeout = new Error('The check took too long.');
+                        timeout.code = 'took_too_long';
+                        throw timeout;
+                    }
+                    const offline = new Error('Could not reach the desk.');
+                    offline.code = navigator.onLine === false ? 'no_connection' : 'press_failure';
+                    throw offline;
+                } finally {
+                    clearTimeout(abortTimer);
+                }
 
                 const data = await response.json();
                 if (!response.ok) {
@@ -1605,6 +1623,18 @@
                     headline: 'The Edition Did Not Go To Press',
                     body: 'Something failed on the way to the verification desk, so there is no verdict to report. This says nothing about the claim itself, only about us.',
                     footer: 'Try again in a moment.'
+                },
+                took_too_long: {
+                    kicker: 'Stop Press',
+                    headline: 'This One Ran Past Deadline',
+                    body: 'The check was still running after a minute and we stopped waiting. Some claims send us chasing a lot of slow pages. Nothing has been decided either way.',
+                    footer: 'Try again, or shorten the claim to something more specific.'
+                },
+                no_connection: {
+                    kicker: 'Notice to Readers',
+                    headline: 'No Connection',
+                    body: 'Your device appears to be offline, so we could not check anything. The page itself still works.',
+                    footer: 'Try again once you are back online.'
                 }
             };
 
