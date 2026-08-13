@@ -1131,6 +1131,21 @@
 
         const READABLE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'];
 
+        function ocrLooksLikeNoise(raw) {
+            const s = (raw || '').replace(/\s+/g, ' ').trim();
+            if (!s) return false;
+            const words = s.match(/[A-Za-z]{2,}/g) || [];
+            if (words.length < 8) return false;
+            const STOP = /^(the|and|of|to|in|is|are|for|on|with|that|this|from|as|at|by|be|was|were|it|not|no|you|we|will|would|has|have|had|but|or|an|if|can|all|our|your|their|his|her|its|been|more|than|there|when|what|who|how|out|up|about|into|over|after|before|any|also|said|says|do|does|did|may|must|should)$/i;
+            const stopRatio = words.filter(function (w) { return STOP.test(w); }).length / words.length;
+            const mixedRatio = words.filter(function (w) { return /[a-z][A-Z]/.test(w); }).length / words.length;
+            const noVowelRatio = words.filter(function (w) { return !/[aeiouAEIOU]/.test(w); }).length / words.length;
+            if (stopRatio < 0.04 && (mixedRatio > 0.08 || noVowelRatio > 0.15)) return true;
+            if (mixedRatio > 0.20) return true;
+            if (noVowelRatio > 0.35) return true;
+            return false;
+        }
+
         function cleanOcrText(raw) {
             if (typeof raw !== 'string' || !raw.trim()) return '';
 
@@ -1188,10 +1203,14 @@
                     }
                 }}).then(function(result) {
                     const rawText = (result && result.data && result.data.text) ? result.data.text : '';
-                    uploadedImageText = cleanOcrText(rawText);
-                    document.getElementById('ocrText').textContent = uploadedImageText
-                        ? (uploadedImageText.length > 200 ? uploadedImageText.slice(0, 200) + '...' : uploadedImageText)
-                        : (rawText.trim() ? 'No readable text found' : 'No text found');
+                    const scanned = cleanOcrText(rawText);
+                    const isNoise = ocrLooksLikeNoise(scanned);
+                    uploadedImageText = isNoise ? '' : scanned;
+                    document.getElementById('ocrText').textContent = isNoise
+                        ? 'Not English — the picture will be read directly'
+                        : (uploadedImageText
+                            ? (uploadedImageText.length > 200 ? uploadedImageText.slice(0, 200) + '...' : uploadedImageText)
+                            : (rawText.trim() ? 'No readable text found' : 'No text found'));
                     window._ocrInProgress = false;
                 }).catch(function(err){
                     console.error('OCR error', err);

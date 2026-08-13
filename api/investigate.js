@@ -610,6 +610,39 @@ async function checkDailyQuota(sessionId, limit) {
   return { allowed: state.count <= limit, remaining: Math.max(0, limit - state.count) };
 }
 
+// Browser OCR runs in English. Point it at Devanagari, Bangla, Tamil or any
+// other non-Latin script and it does not fail — it returns a long stream of
+// plausible-looking Latin nonsense ("mwaE & i) 78 FAsam raH faumT"). That is
+// worse than an empty result: it is long enough to pass a length check, so the
+// picture never gets attached and the model is left to infer a claim from
+// noise. It will find one. Length alone cannot tell these apart; shape can.
+function looksLikeOcrGarbage(raw) {
+  const s = (raw || '').replace(/\s+/g, ' ').trim();
+  if (!s) return false;
+
+  const words = s.match(/[A-Za-z]{2,}/g) || [];
+  if (words.length < 8) return false; // too little to judge fairly
+
+  // Function words are the giveaway. Real English prose is full of them; a
+  // wrong-script transcription has none, because it is not words at all.
+  const STOP = /^(the|and|of|to|in|is|are|for|on|with|that|this|from|as|at|by|be|was|were|it|not|no|you|we|will|would|has|have|had|but|or|an|if|can|all|our|your|their|his|her|its|been|more|than|there|when|what|who|how|out|up|about|into|over|after|before|any|also|said|says|do|does|did|may|must|should)$/i;
+  const stopRatio = words.filter(w => STOP.test(w)).length / words.length;
+
+  // A capital inside a word, after a lowercase, is a classic wrong-script
+  // artefact: "mwaE", "faumT", "AfRaaa". Rare in real words.
+  const mixedRatio = words.filter(w => /[a-z][A-Z]/.test(w)).length / words.length;
+
+  // Letter runs carrying no vowel at all: "glgmfplrfl", "TR", "fs".
+  const noVowelRatio = words.filter(w => !/[aeiouAEIOU]/.test(w)).length / words.length;
+
+  // Two signals, not one. An all-caps English poster can legitimately have
+  // almost no function words, so that alone must not condemn it.
+  if (stopRatio < 0.04 && (mixedRatio > 0.08 || noVowelRatio > 0.15)) return true;
+  if (mixedRatio > 0.20) return true;
+  if (noVowelRatio > 0.35) return true;
+  return false;
+}
+
 // ============================================================================
 // MAIN HANDLER
 // ============================================================================
@@ -859,13 +892,21 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     // Whether the model needs to look at the picture, decided once and used
     // both for what we tell it and for what we actually send.
     const ocrCharCount = extractedOCR.replace(/\s+/g, ' ').trim().length;
-    const needsToSeeImage = !!image && ocrCharCount < OCR_ENOUGH;
+    // Thin OCR and garbled OCR both mean the same thing: the text we hold is
+    // not the claim, so the picture has to be looked at.
+    const ocrIsNoise = !!image && looksLikeOcrGarbage(extractedOCR);
+    const needsToSeeImage = !!image && (ocrCharCount < OCR_ENOUGH || ocrIsNoise);
+    if (ocrIsNoise) {
+      console.log('[investigate] OCR output is not language; attaching the image and discarding the scan');
+    }
 
     // Typed text and text read off an image are not equally trustworthy, and
     // merging them hides that. Label the OCR so the editor reads it for the
     // claim rather than treating every character as written by someone.
     const typedInput = (text || '').slice(0, 5000);
-    const imageInput = (extractedOCR || '').slice(0, 5000);
+    // Noise is not evidence. Passing it through labelled "OCR" invites the
+    // model to treat stray digits as figures and build a claim around them.
+    const imageInput = ocrIsNoise ? '' : (extractedOCR || '').slice(0, 5000);
 
     if (typedInput) {
       userContent += `CLAIM TO ANALYZE:\n"""${typedInput}"""\n\n`;
@@ -874,6 +915,10 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
     if (imageInput) {
       userContent += `TEXT READ FROM AN IMAGE (OCR):\n"""${imageInput}"""\n\n`;
       userContent += `About that text: it was scanned out of a screenshot or photograph, so expect broken words, missing punctuation, wrong characters, and stray fragments of headlines, timestamps, watermarks or interface furniture mixed in. Work out what claim is actually being made and check that. Do not treat a transcription error as part of the claim, and do not quote the OCR text back verbatim.\n\n`;
+    }
+
+    if (ocrIsNoise) {
+      userContent += `NOTE ON THE IMAGE: our text scanner runs in English and this picture is not in English, so it returned nonsense rather than words. We have thrown that scan away instead of passing it to you. Read the claim off the attached picture yourself, in whatever language it is written in, and answer in English. Do not infer anything from the fact that the scan failed — it says nothing about the claim.\n\n`;
     }
 
     if (needsToSeeImage) {
