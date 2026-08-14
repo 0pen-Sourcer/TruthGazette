@@ -1425,7 +1425,12 @@ Remember: Your credibility depends on NEVER making up information. If you can't 
       trustedDomains.some(d => s.url.toLowerCase().includes(d))
     );
     if (hasTrusted) confidence = Math.min(95, confidence + 5);
-    
+
+    // Nothing survived verification. The reasoning may still be right, but we
+    // have printed nothing the reader can go and check, so we must not sound
+    // as sure as when we have. This is the case the house rule exists for.
+    if (displaySources.length === 0) confidence = Math.min(confidence, 65);
+
     // Clamp confidence
     confidence = Math.max(60, Math.min(95, Math.round(confidence)));
 
